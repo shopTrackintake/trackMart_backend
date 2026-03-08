@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+
 import addressRoutes from "./routes/addressRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
@@ -14,12 +15,22 @@ import customerRoutes from "./routes/customerRoutes.js";
 
 const app = express();
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "https://trackmart-frontend.onrender.com"
+  ],
+  methods: ["GET","POST","PUT","DELETE"],
+  credentials: true
+}));
+
+app.options("*", cors());
+
 app.use(express.json());
 
 app.use("/api/customer", customerRoutes);
 app.use("/api/support", supportRoutes);
-app.use("/api/notifications",notificationRoutes);
+app.use("/api/notifications", notificationRoutes);
 app.use("/api/vendor", vendorRoutes);
 app.use("/api/addresses", addressRoutes);
 app.use("/uploads", express.static("uploads"));
