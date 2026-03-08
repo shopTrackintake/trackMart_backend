@@ -1,4 +1,9 @@
 import dotenv from "dotenv";
+import pool from "./config/db.js";
+
+pool.connect()
+.then(() => console.log("Database connected"))
+.catch(err => console.log("DB error:", err));
 dotenv.config();   // 🔥 FIRST LINE
 
 import app from "./app.js";
