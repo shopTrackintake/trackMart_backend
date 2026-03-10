@@ -64,7 +64,7 @@ export const getWishlist = async (req, res) => {
 
 /* ================= REMOVE FROM WISHLIST ================= */
 
-export const removeFromWishlist = async (req, res) => {
+export const removeWishlist = async (req, res) => {
 
   try {
 
@@ -134,4 +134,5 @@ export const toggleWishlist = async (req, res) => {
   }
 
 };
+
 
