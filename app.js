@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-
+import wishlistRoutes from "./routes/wishlistRoutes.js";
 import addressRoutes from "./routes/addressRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
@@ -27,7 +27,7 @@ app.use(cors({
 app.options("*", cors());
 
 app.use(express.json());
-
+app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/customer", customerRoutes);
 app.use("/api/support", supportRoutes);
 app.use("/api/notifications", notificationRoutes);
