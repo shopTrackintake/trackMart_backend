@@ -3,7 +3,7 @@ import pool from "../config/db.js";
 
 /* ================= ADD TO WISHLIST ================= */
 
-export const addToWishlist = async (req, res) => {
+export const addWishlist = async (req, res) => {
 
   try {
 
@@ -134,3 +134,4 @@ export const toggleWishlist = async (req, res) => {
   }
 
 };
+
