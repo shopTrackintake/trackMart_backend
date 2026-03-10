@@ -11,13 +11,13 @@ import { upload } from "../middleware/upload.js";
 
 const router = express.Router();
 
-/* GET VENDOR PRODUCTS */
-router.get("/vendor", protect, getVendorProducts);
-
-/* GET ALL PRODUCTS */
+/* ================= GET ALL PRODUCTS ================= */
 router.get("/", getProducts);
 
-/* CREATE PRODUCT */
+/* ================= GET VENDOR PRODUCTS ================= */
+router.get("/vendor", protect, getVendorProducts);
+
+/* ================= CREATE PRODUCT ================= */
 router.post(
   "/",
   protect,
@@ -28,7 +28,7 @@ router.post(
   createProduct
 );
 
-/* DELETE PRODUCT */
+/* ================= DELETE PRODUCT ================= */
 router.delete("/:id", protect, deleteProduct);
 
 export default router;
