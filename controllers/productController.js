@@ -185,12 +185,34 @@ export const getVendorProducts = async (req, res) => {
 
 
 /* ================= DELETE PRODUCT ================= */
-
 export const deleteProduct = async (req,res)=>{
 
  try{
 
-  const {id} = req.params;
+  const { id } = req.params;
+
+  /* remove product from cart */
+
+  await pool.query(
+   "DELETE FROM cart WHERE product_id=$1",
+   [id]
+  );
+
+  /* remove product from wishlist */
+
+  await pool.query(
+   "DELETE FROM wishlist WHERE product_id=$1",
+   [id]
+  );
+
+  /* remove product from order_items (optional but safe) */
+
+  await pool.query(
+   "DELETE FROM order_items WHERE product_id=$1",
+   [id]
+  );
+
+  /* finally delete product */
 
   await pool.query(
    "DELETE FROM products WHERE id=$1",
