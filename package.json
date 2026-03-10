@@ -1,0 +1,27 @@
+{
+  "name": "marketplace-backend",
+  "version": "1.0.0",
+  "type": "module",
+<<<<<<< HEAD
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node src/server.js"
+=======
+  "main": "server.js",
+  "scripts": {
+    "dev": "server.js"
+>>>>>>> shraddha
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cloudinary": "^1.41.3",
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.22.1",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.1.1",
+    "multer-storage-cloudinary": "^4.0.0",
+    "pg": "^8.11.3",
+    "uuid": "^9.0.1"
+  }
+}
