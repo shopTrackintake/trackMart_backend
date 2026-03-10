@@ -2,15 +2,9 @@
   "name": "marketplace-backend",
   "version": "1.0.0",
   "type": "module",
-<<<<<<< HEAD
   "main": "src/server.js",
   "scripts": {
     "dev": "node src/server.js"
-=======
-  "main": "server.js",
-  "scripts": {
-    "dev": "server.js"
->>>>>>> shraddha
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
