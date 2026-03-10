@@ -18,7 +18,9 @@ const app = express();
 app.use(cors({
   origin: [
     "http://localhost:5173",
-    "https://trackmart-frontend.onrender.com"
+
+    "https://trackmart-frontend-1erg.onrender.com"
+
   ],
   methods: ["GET","POST","PUT","DELETE"],
   credentials: true
