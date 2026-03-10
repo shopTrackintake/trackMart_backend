@@ -168,7 +168,10 @@ export const getVendorProducts = async (req, res) => {
   const vendorId = vendor.rows[0].id;
 
   const products = await pool.query(
-   "SELECT * FROM products WHERE vendor_id=$1 ORDER BY created_at DESC",
+   "SELECT * 
+FROM products
+WHERE vendor_id=$1 AND status='active'
+ORDER BY created_at DESC,
    [vendorId]
   );
 
