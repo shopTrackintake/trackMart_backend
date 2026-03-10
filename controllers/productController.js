@@ -81,11 +81,11 @@ export const createProduct = async (req, res) => {
     const vendor_id = vendor.rows[0].id;
     const vendorName = vendor.rows[0].business_name;
 
-    const product_image =
-      req.files?.product_image?.[0]?.filename || null;
+   const product_image =
+  req.files?.product_image?.[0]?.path || null;
 
-    const ingredients_image =
-      req.files?.ingredients_image?.[0]?.filename || null;
+const ingredients_image =
+  req.files?.ingredients_image?.[0]?.path || null;
 
     const product = await pool.query(
       `INSERT INTO products
