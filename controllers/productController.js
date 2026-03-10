@@ -191,35 +191,14 @@ export const deleteProduct = async (req,res)=>{
 
   const { id } = req.params;
 
-  /* remove product from cart */
+  /* soft delete instead of hard delete */
 
   await pool.query(
-   "DELETE FROM cart WHERE product_id=$1",
+   "UPDATE products SET status='inactive' WHERE id=$1",
    [id]
   );
 
-  /* remove product from wishlist */
-
-  await pool.query(
-   "DELETE FROM wishlist WHERE product_id=$1",
-   [id]
-  );
-
-  /* remove product from order_items (optional but safe) */
-
-  await pool.query(
-   "DELETE FROM order_items WHERE product_id=$1",
-   [id]
-  );
-
-  /* finally delete product */
-
-  await pool.query(
-   "DELETE FROM products WHERE id=$1",
-   [id]
-  );
-
-  res.json({message:"Product deleted"});
+  res.json({message:"Product removed from store"});
 
  }catch(err){
 
