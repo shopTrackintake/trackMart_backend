@@ -9,6 +9,7 @@ export const getProducts = async (req, res) => {
       `SELECT 
         p.*,
         c.name AS category_name,
+         c.benefits,
         v.business_name
        FROM products p
        LEFT JOIN categories c ON p.category_id = c.id
@@ -40,12 +41,15 @@ export const createProduct = async (req, res) => {
       description,
       price,
       stock,
+      size,
       category_id,
       calories,
       sugar,
       fat,
       protein,
       ingredients,
+       how_to_use = null,
+  making_process = null,
       delivery_charge
     } = req.body;
 
@@ -53,6 +57,7 @@ export const createProduct = async (req, res) => {
     const parsedStock = Number(stock);
     const parsedCalories = Number(calories);
     const parsedSugar = Number(sugar);
+    const parsedSize = Number(size);
     const parsedFat = Number(fat);
     const parsedProtein = Number(protein);
     const parsedDelivery = Number(delivery_charge || 0);
@@ -90,9 +95,9 @@ const ingredients_image =
     const product = await pool.query(
       `INSERT INTO products
       (vendor_id,category_id,title,description,
-       price,stock,delivery_charge,
+       price,stock,size,delivery_charge,
        calories,sugar,fat,protein,
-       ingredients,health_rating,
+       ingredients,health_rating,how_to_use,making_process,
        image_url,ingredients_image_url)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        RETURNING *`,
@@ -103,9 +108,12 @@ const ingredients_image =
         description,
         parsedPrice,
         parsedStock,
+        parsedSize,
         parsedDelivery,
         parsedCalories,
         parsedSugar,
+        how_to_use,
+making_process,
         parsedFat,
         parsedProtein,
         ingredients,
@@ -167,10 +175,13 @@ export const getVendorProducts = async (req, res) => {
   const vendorId = vendor.rows[0].id;
 
   const products = await pool.query(
-   `SELECT *
-    FROM products
-    WHERE vendor_id=$1 AND status='active'
-    ORDER BY created_at DESC`,
+   `
+   SELECT *
+   FROM products
+   WHERE vendor_id=$1
+   AND status='active'
+   ORDER BY created_at DESC
+   `,
    [vendorId]
   );
 
@@ -189,24 +200,22 @@ export const getVendorProducts = async (req, res) => {
 /* ================= DELETE PRODUCT ================= */
 export const deleteProduct = async (req,res)=>{
 
- try{
+try{
 
-  const { id } = req.params;
+const { id } = req.params;
 
-  /* soft delete instead of hard delete */
+await pool.query(
+"UPDATE products SET status='inactive' WHERE id=$1",
+[id]
+);
 
-  await pool.query(
-   "UPDATE products SET status='inactive' WHERE id=$1",
-   [id]
-  );
+res.json({message:"Product removed from store"});
 
-  res.json({message:"Product removed from store"});
+}catch(err){
 
- }catch(err){
+console.log(err);
+res.status(500).json({message:err.message});
 
-  console.log(err);
-  res.status(500).json({message:err.message});
-
- }
+}
 
 };
