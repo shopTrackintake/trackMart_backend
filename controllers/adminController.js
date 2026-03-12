@@ -223,6 +223,7 @@ p.*,
 v.business_name
 FROM products p
 JOIN vendors v ON p.vendor_id = v.id
+WHERE p.status = 'active'
 ORDER BY v.business_name, p.created_at DESC
 `
 );
@@ -269,7 +270,7 @@ const vendorUserId = product.rows[0].user_id;
 /* DELETE PRODUCT */
 
 await pool.query(
-"DELETE FROM products WHERE id=$1",
+"UPDATE products SET status='inactive' WHERE id=$1",
 [id]
 );
 
@@ -316,6 +317,8 @@ p.title,
 p.description,
 p.price,
 p.stock,
+p.size,
+p.category_id,
 p.image_url,
 p.ingredients_image_url,
 p.ingredients,
@@ -323,15 +326,17 @@ p.calories,
 p.sugar,
 p.fat,
 p.protein,
-p.health_rating,
-p.vendor_claimed_health,
-p.system_health_rating,
+p.how_to_use,
+p.making_process,
 p.delivery_charge,
 p.status,
 p.created_at,
+c.name AS category_name,
+c.benefits,
 v.business_name
 FROM products p
 JOIN vendors v ON p.vendor_id = v.id
+LEFT JOIN categories c ON p.category_id = c.id
 WHERE p.id = $1
 `,
 [id]
