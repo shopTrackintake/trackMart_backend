@@ -57,7 +57,7 @@ export const createProduct = async (req, res) => {
     const parsedStock = Number(stock);
     const parsedCalories = Number(calories);
     const parsedSugar = Number(sugar);
-    const parsedSize = Number(size);
+    const parsedSize = size;
     const parsedFat = Number(fat);
     const parsedProtein = Number(protein);
     const parsedDelivery = Number(delivery_charge || 0);
