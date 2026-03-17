@@ -186,7 +186,6 @@ res.status(500).json({message:err.message});
 
 
 /* ================= CONFIRM ORDER ================= */
-
 export const confirmVendorOrder = async (req,res)=>{
 
 try{
@@ -238,8 +237,29 @@ userId,
 ]
 );
 
+/* 🔥 FULL ORDER DATA (FIX) */
+
 const updated = await pool.query(
-`SELECT * FROM orders WHERE id=$1`,
+`
+SELECT 
+o.id,
+o.order_status,
+o.delivery_date,
+o.user_id,
+u.name AS customer_name,
+u.id AS customer_id,
+a.phone,
+a.house_no,
+a.street,
+a.locality,
+a.city,
+a.state,
+a.pincode
+FROM orders o
+JOIN users u ON o.user_id=u.id
+JOIN addresses a ON o.address_id=a.id
+WHERE o.id=$1
+`,
 [id]
 );
 
@@ -326,8 +346,29 @@ userId,
 ]
 );
 
+/* 🔥 FULL ORDER DATA (FIX) */
+
 const updated = await pool.query(
-`SELECT * FROM orders WHERE id=$1`,
+`
+SELECT 
+o.id,
+o.order_status,
+o.delivery_date,
+o.user_id,
+u.name AS customer_name,
+u.id AS customer_id,
+a.phone,
+a.house_no,
+a.street,
+a.locality,
+a.city,
+a.state,
+a.pincode
+FROM orders o
+JOIN users u ON o.user_id=u.id
+JOIN addresses a ON o.address_id=a.id
+WHERE o.id=$1
+`,
 [id]
 );
 
