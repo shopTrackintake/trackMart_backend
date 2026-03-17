@@ -12,6 +12,7 @@ export const getProducts = async (req, res) => {
       SELECT 
         p.*,
         c.name AS category_name,
+        c.benefits AS benefits,
         v.business_name
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
@@ -131,8 +132,7 @@ export const createProduct = async (req, res) => {
       protein,
       ingredients,
       how_to_use = null,
-      making_process = null,
-      delivery_charge
+      making_process = null
     } = req.body;
 
     /* REQUIRED VALIDATION */
@@ -150,7 +150,6 @@ export const createProduct = async (req, res) => {
     const parsedFat = fat ? Number(fat) : null;
     const parsedProtein = protein ? Number(protein) : null;
     const parsedSize = size;
-    const parsedDelivery = Number(delivery_charge || 0);
 
     /* HEALTH RATING */
 
@@ -194,7 +193,7 @@ export const createProduct = async (req, res) => {
       `
       INSERT INTO products
       (vendor_id,category_id,title,description,
-      price,stock,size,delivery_charge,
+      price,stock,size,
       calories,sugar,fat,protein,
       care_type,concern_type,
       ingredients,health_rating,
@@ -212,7 +211,7 @@ export const createProduct = async (req, res) => {
         parsedPrice,
         parsedStock,
         parsedSize,
-        parsedDelivery,
+      
         parsedCalories,
         parsedSugar,
         parsedFat,

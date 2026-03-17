@@ -7,7 +7,7 @@ export const createOrder = async (req, res) => {
     const userId = req.user.id;
 
     const cart = await pool.query(
-      `SELECT c.*, p.price, p.vendor_id, p.delivery_charge, p.title
+      `SELECT c.*, p.price, p.vendor_id, p.title
        FROM carts c
        JOIN products p ON p.id=c.product_id
        WHERE c.user_id=$1`,
@@ -24,10 +24,9 @@ export const createOrder = async (req, res) => {
       const productTotal =
         Number(item.price) * Number(item.quantity);
 
-      const delivery =
-        Number(item.delivery_charge || 0);
+     
 
-      total += productTotal + delivery;
+      total += productTotal ;
     }
 
     const order = await pool.query(
@@ -52,14 +51,13 @@ address_id
       const productTotal =
         Number(item.price) * Number(item.quantity);
 
-      const delivery =
-        Number(item.delivery_charge || 0);
+     
 
       const commission =
         productTotal * 0.10;
 
       const earning =
-        (productTotal - commission) + delivery;
+        (productTotal - commission);
 
       await pool.query(
         `INSERT INTO order_items
