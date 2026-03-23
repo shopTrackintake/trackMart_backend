@@ -1,33 +1,35 @@
 import pool from "../config/db.js";
 
 /* ================= GET PRODUCTS ================= */
-
 export const getProducts = async (req, res) => {
-
   try {
+    const {
+      search,
+      category,
+      care,
+      concern,
+      price,
+      sort,
+      page = 1,
+      limit = 8
+    } = req.query;
 
-    const { search, category, care, concern, price, sort } = req.query;
+    const offset = (page - 1) * limit;
 
-    let query = `
-      SELECT 
-        p.*,
-        c.name AS category_name,
-        c.benefits AS benefits,
-        v.business_name
+    let baseQuery = `
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN vendors v ON p.vendor_id = v.id
       WHERE p.status='active'
     `;
 
-    const values = [];
+    let values = [];
     let index = 1;
 
-    /* SEARCH */
+    /* FILTERS SAME AS YOUR CODE */
 
     if (search) {
-
-      query += `
+      baseQuery += `
         AND (
           p.title ILIKE $${index}
           OR p.description ILIKE $${index}
@@ -35,75 +37,72 @@ export const getProducts = async (req, res) => {
           OR p.concern_type ILIKE $${index}
         )
       `;
-
       values.push(`%${search}%`);
       index++;
-
     }
-
-    /* CATEGORY */
 
     if (category) {
-
-      query += ` AND p.category_id = $${index}`;
+      baseQuery += ` AND p.category_id = $${index}`;
       values.push(category);
       index++;
-
     }
-
-    /* CARE */
 
     if (care) {
-
-      query += ` AND p.care_type ILIKE $${index}`;
+      baseQuery += ` AND p.care_type ILIKE $${index}`;
       values.push(`%${care}%`);
       index++;
-
     }
-
-    /* CONCERN */
 
     if (concern) {
-
-      query += ` AND p.concern_type ILIKE $${index}`;
+      baseQuery += ` AND p.concern_type ILIKE $${index}`;
       values.push(`%${concern}%`);
       index++;
-
     }
 
-    /* PRICE */
-
     if (price) {
-
-      query += ` AND p.price <= $${index}`;
+      baseQuery += ` AND p.price <= $${index}`;
       values.push(price);
       index++;
-
     }
 
     /* SORT */
+    let orderBy = `ORDER BY p.created_at DESC`;
+    if (sort === "price_low") orderBy = `ORDER BY p.price ASC`;
+    if (sort === "price_high") orderBy = `ORDER BY p.price DESC`;
 
-    if (sort === "price_low") {
-      query += ` ORDER BY p.price ASC`;
-    }
-    else if (sort === "price_high") {
-      query += ` ORDER BY p.price DESC`;
-    }
-    else {
-      query += ` ORDER BY p.created_at DESC`;
-    }
+    /* MAIN QUERY WITH LIMIT */
+    const productsQuery = `
+      SELECT 
+        p.*,
+        c.name AS category_name,
+        c.benefits,
+        v.business_name
+      ${baseQuery}
+      ${orderBy}
+      LIMIT $${index} OFFSET $${index + 1}
+   `;
 
-    const products = await pool.query(query, values);
+    const products = await pool.query(productsQuery, [
+      ...values,
+      limit,
+      offset
+    ]);
 
-    res.json(products.rows);
+    /* COUNT QUERY */
+    const countQuery = `SELECT COUNT(*) ${baseQuery}`;
+    const totalResult = await pool.query(countQuery, values);
+
+    const total = parseInt(totalResult.rows[0].count);
+
+    res.json({
+      products: products.rows,
+      totalPages: Math.ceil(total / limit)
+    });
 
   } catch (err) {
-
     console.log(err);
     res.status(500).json({ message: err.message });
-
   }
-
 };
 
 
