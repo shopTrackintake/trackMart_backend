@@ -1,5 +1,34 @@
 import pool from "../config/db.js";
+export const getProductById = async (req, res) => {
+  try {
+    const { id } = req.params;
 
+    const product = await pool.query(
+      `
+      SELECT 
+        p.*,
+        c.name AS category_name,
+        c.benefits,
+        v.business_name
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN vendors v ON p.vendor_id = v.id
+      WHERE p.id = $1 AND p.status='active'
+      `,
+      [id]
+    );
+
+    if (product.rows.length === 0) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    res.json(product.rows[0]);
+
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ message: err.message });
+  }
+};
 /* ================= GET PRODUCTS ================= */
 export const getProducts = async (req, res) => {
   try {
