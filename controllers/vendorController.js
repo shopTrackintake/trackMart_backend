@@ -124,13 +124,25 @@ export const getVendorEarnings = async (req, res) => {
 
 
 /* ================= GET ORDER DETAILS ================= */
-
 export const getVendorOrderDetails = async (req,res)=>{
 
 try{
 
 const { id } = req.params;
 
+/* 🔥 VENDOR CHECK */
+const vendor = await pool.query(
+  "SELECT id FROM vendors WHERE user_id=$1",
+  [req.user.id]
+);
+
+if (!vendor.rows.length) {
+  return res.status(404).json({ message: "Vendor not found" });
+}
+
+const vendorId = vendor.rows[0].id;
+
+/* 🔥 ORDER */
 const order = await pool.query(
 `
 SELECT 
@@ -149,12 +161,17 @@ a.state,
 a.pincode
 FROM orders o
 JOIN users u ON o.user_id=u.id
-JOIN addresses a ON o.address_id=a.id
+LEFT JOIN addresses a ON o.address_id=a.id   -- ✅ FIX
 WHERE o.id=$1
 `,
 [id]
 );
 
+if (!order.rows.length) {
+  return res.status(404).json({ message: "Order not found" });
+}
+
+/* 🔥 ITEMS (IMPORTANT FIX) */
 const items = await pool.query(
 `
 SELECT 
@@ -164,9 +181,9 @@ oi.price_at_purchase,
 p.title
 FROM order_items oi
 JOIN products p ON oi.product_id=p.id
-WHERE oi.order_id=$1
+WHERE oi.order_id=$1 AND oi.vendor_id=$2
 `,
-[id]
+[id, vendorId]
 );
 
 res.json({
@@ -176,7 +193,7 @@ items: items.rows
 
 }catch(err){
 
-console.log(err);
+console.log("🔥 ERROR:", err);  // 👈 MUST SEE THIS
 res.status(500).json({message:err.message});
 
 }

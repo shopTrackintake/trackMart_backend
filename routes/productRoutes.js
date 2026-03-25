@@ -3,6 +3,7 @@ import {
   createProduct,
   getVendorProducts,
   deleteProduct,
+  getProductById,
   getProducts
 } from "../controllers/productController.js";
 
@@ -12,25 +13,16 @@ import { upload } from "../middleware/upload.js";
 const router = express.Router();
 
 /* ================= GET ALL PRODUCTS (WITH SEARCH) ================= */
-
 router.get("/", getProducts);
 
-/*
-Examples:
-
-GET /api/products
-GET /api/products?search=sea
-GET /api/products?search=immunity
-*/
-
-
-/* ================= GET VENDOR PRODUCTS ================= */
 
 router.get("/vendor", protect, getVendorProducts);
 
 
-/* ================= CREATE PRODUCT ================= */
+router.get("/:id", getProductById);
 
+
+/* CREATE */
 router.post(
   "/",
   protect,
@@ -41,9 +33,7 @@ router.post(
   createProduct
 );
 
-
-/* ================= DELETE PRODUCT ================= */
-
+/* DELETE */
 router.delete("/:id", protect, deleteProduct);
 
 
