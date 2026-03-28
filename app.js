@@ -12,15 +12,13 @@ import vendorRoutes from "./routes/vendorRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import supportRoutes from "./routes/supportRoutes.js";
 import customerRoutes from "./routes/customerRoutes.js";
-
+import profileRoutes from "./routes/profileRoutes.js";
 const app = express();
 
 app.use(cors({
   origin: [
     "http://localhost:5173",
-
-    "https://trackmart-frontend-1erg.onrender.com"
-
+    "https://trackmart-frontend.onrender.com"
   ],
   methods: ["GET","POST","PUT","DELETE"],
   credentials: true
@@ -29,6 +27,7 @@ app.use(cors({
 app.options("*", cors());
 
 app.use(express.json());
+app.use("/api/user", profileRoutes); // ✅ FIXED
 app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/customer", customerRoutes);
 app.use("/api/support", supportRoutes);
