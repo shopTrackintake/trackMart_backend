@@ -62,7 +62,8 @@ export const getVendorOrders = async (req, res) => {
     const orders = await pool.query(
       `SELECT 
         o.id AS order_id,
-        o.order_status,
+         oi.item_status,  
+      
         o.created_at,
         oi.quantity,
         oi.vendor_earning,
@@ -161,7 +162,7 @@ a.state,
 a.pincode
 FROM orders o
 JOIN users u ON o.user_id=u.id
-LEFT JOIN addresses a ON o.address_id=a.id   -- ✅ FIX
+LEFT JOIN addresses a ON o.address_id=a.id
 WHERE o.id=$1
 `,
 [id]
@@ -177,6 +178,8 @@ const items = await pool.query(
 SELECT 
 oi.id,
 oi.quantity,
+oi.item_status,
+oi.delivery_date,
 oi.price_at_purchase,
 p.title
 FROM order_items oi
@@ -203,204 +206,133 @@ res.status(500).json({message:err.message});
 
 
 /* ================= CONFIRM ORDER ================= */
-export const confirmVendorOrder = async (req,res)=>{
+export const confirmItem = async (req, res) => {
+  try {
 
-try{
+    const { item_id, delivery_date } = req.body;
 
-const { id } = req.params;
-const { delivery_date } = req.body;
+    if (!item_id) {
+      return res.status(400).json({ message: "item_id required" });
+    }
 
-const today = new Date().toISOString().split("T")[0];
+    if (!delivery_date) {
+      return res.status(400).json({ message: "Delivery date required" });
+    }
 
-if(delivery_date < today){
-return res.status(400).json({
-message:"Delivery date cannot be in the past"
-});
-}
+    const today = new Date().toISOString().split("T")[0];
 
-/* UPDATE ORDER */
+    if (delivery_date < today) {
+      return res.status(400).json({
+        message: "Invalid delivery date"
+      });
+    }
 
-await pool.query(
-`
-UPDATE orders
-SET order_status='confirmed',
-delivery_date=$1
-WHERE id=$2
-`,
-[delivery_date,id]
-);
+    const vendor = await pool.query(
+      "SELECT id FROM vendors WHERE user_id=$1",
+      [req.user.id]
+    );
 
-/* GET USER */
+    if (!vendor.rows.length) {
+      return res.status(404).json({ message: "Vendor not found" });
+    }
 
-const orderUser = await pool.query(
-"SELECT user_id FROM orders WHERE id=$1",
-[id]
-);
+    const vendorId = vendor.rows[0].id;
 
-const userId = orderUser.rows[0].user_id;
+    const itemCheck = await pool.query(
+      `SELECT * FROM order_items 
+       WHERE id=$1 AND vendor_id=$2`,
+      [item_id, vendorId]
+    );
 
-/* NOTIFICATION */
+    if (!itemCheck.rows.length) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
 
-await pool.query(
-`
-INSERT INTO notifications (user_id,title,message,type)
-VALUES ($1,$2,$3,$4)
-`,
-[
-userId,
-"Order Confirmed",
-"Vendor confirmed your order",
-"order"
-]
-);
+    await pool.query(
+      `UPDATE order_items
+       SET item_status='confirmed',
+           delivery_date=$1
+       WHERE id=$2`,
+      [delivery_date, item_id]
+    );
 
-/* 🔥 FULL ORDER DATA (FIX) */
+    res.json({ message: "Item confirmed" });
 
-const updated = await pool.query(
-`
-SELECT 
-o.id,
-o.order_status,
-o.delivery_date,
-o.user_id,
-u.name AS customer_name,
-u.id AS customer_id,
-a.phone,
-a.house_no,
-a.street,
-a.locality,
-a.city,
-a.state,
-a.pincode
-FROM orders o
-JOIN users u ON o.user_id=u.id
-JOIN addresses a ON o.address_id=a.id
-WHERE o.id=$1
-`,
-[id]
-);
-
-res.json({
-message:"Order confirmed",
-order: updated.rows[0]
-});
-
-}catch(err){
-
-console.log(err);
-res.status(500).json({message:err.message});
-
-}
-
+  } catch (err) {
+    console.log("🔥 ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
 };
 
+export const markOrderDelivered = async (req, res) => {
+  try {
 
+    const { item_id } = req.body;
 
-/* ================= MARK DELIVERED ================= */
-export const markOrderDelivered = async (req,res)=>{
+    // ✅ 1. Get vendorId
+    const vendor = await pool.query(
+      "SELECT id FROM vendors WHERE user_id=$1",
+      [req.user.id]
+    );
 
-try{
+    if (!vendor.rows.length) {
+      return res.status(404).json({ message: "Vendor not found" });
+    }
 
-const { id } = req.params;
+    const vendorId = vendor.rows[0].id;
 
-const orderCheck = await pool.query(
-`SELECT payment_method,user_id FROM orders WHERE id=$1`,
-[id]
-);
+    // ✅ 2. Check item belongs to this vendor
+    const itemCheck = await pool.query(
+      `SELECT * FROM order_items WHERE id=$1 AND vendor_id=$2`,
+      [item_id, vendorId]
+    );
 
-const paymentMethod = orderCheck.rows[0].payment_method;
-const userId = orderCheck.rows[0].user_id;
+    if (!itemCheck.rows.length) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
 
+    const orderId = itemCheck.rows[0].order_id;
 
-/* COD → PAYMENT PAID */
+    // ✅ 3. Update ONLY this item
+    await pool.query(
+      `UPDATE order_items
+       SET item_status='delivered'
+       WHERE id=$1`,
+      [item_id]
+    );
 
-if(paymentMethod === "COD"){
+    // ✅ 4. Get user for notification
+    const orderUser = await pool.query(
+      `SELECT user_id FROM orders WHERE id=$1`,
+      [orderId]
+    );
 
-await pool.query(
-`
-UPDATE orders
-SET 
-order_status='delivered',
-payment_status='paid',
-delivered_at=NOW()
-WHERE id=$1
-`,
-[id]
-);
+    if (!orderUser.rows.length) {
+      return res.status(404).json({ message: "Order not found" });
+    }
 
-}
+    const userId = orderUser.rows[0].user_id;
 
-/* ONLINE → ONLY DELIVERED */
+    // ✅ 5. Notify customer (per item delivery)
+    await pool.query(
+      `INSERT INTO notifications (user_id,title,message,type)
+       VALUES ($1,$2,$3,$4)`,
+      [
+        userId,
+        "Item Delivered",
+        "One of your ordered items has been delivered",
+        "order"
+      ]
+    );
 
-else{
+    // ❌ IMPORTANT: Order status ko touch nahi karna
 
-await pool.query(
-`
-UPDATE orders
-SET 
-order_status='delivered',
-delivered_at=NOW()
-WHERE id=$1
-`,
-[id]
-);
+    res.json({ message: "Item delivered successfully" });
 
-}
-
-
-/* NOTIFICATION */
-
-await pool.query(
-`
-INSERT INTO notifications (user_id,title,message,type)
-VALUES ($1,$2,$3,$4)
-`,
-[
-userId,
-"Order Delivered",
-"Your order has been delivered successfully",
-"order"
-]
-);
-
-/* 🔥 FULL ORDER DATA (FIX) */
-
-const updated = await pool.query(
-`
-SELECT 
-o.id,
-o.order_status,
-o.delivery_date,
-o.user_id,
-u.name AS customer_name,
-u.id AS customer_id,
-a.phone,
-a.house_no,
-a.street,
-a.locality,
-a.city,
-a.state,
-a.pincode
-FROM orders o
-JOIN users u ON o.user_id=u.id
-JOIN addresses a ON o.address_id=a.id
-WHERE o.id=$1
-`,
-[id]
-);
-
-res.json({
-message:"Order delivered",
-order: updated.rows[0]
-});
-
-}catch(err){
-
-console.log(err);
-res.status(500).json({message:err.message});
-
-}
-
+  } catch (err) {
+    console.log("🔥 ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
 };
 export const getVendorPayments = async (req,res)=>{
 

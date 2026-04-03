@@ -115,7 +115,7 @@ address_id
       [userId]
     );
 
-    res.json({ message:"Order placed successfully" });
+  res.json({ message: "Order placed successfully", order_id: orderId });
 
   } catch (err) {
     console.log(err);
@@ -123,8 +123,40 @@ address_id
   }
 };
 
+export const updatePaymentStatus = async (req, res) => {
+  try {
 
+    const { order_id, payment_id } = req.body;
 
+    console.log("UPDATE PAYMENT:", order_id, payment_id);
+
+    const result = await pool.query(
+      `UPDATE orders 
+       SET payment_status = 'paid',
+           payment_id = $1
+       WHERE id = $2
+       RETURNING *`,
+      [payment_id, order_id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(400).json({
+        message: "Order not found"
+      });
+    }
+
+    console.log("UPDATED ORDER:", result.rows[0]);
+
+    res.json({
+      message: "Payment updated",
+      order: result.rows[0]
+    });
+
+  } catch (err) {
+    console.log("PAYMENT UPDATE ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
 export const getUserOrders = async (req, res) => {
   try {
 
@@ -141,17 +173,20 @@ export const getUserOrders = async (req, res) => {
     const result = [];
 
     for (const order of orders.rows) {
-
-      const items = await pool.query(
-        `SELECT 
-          oi.*,
-          p.title AS product_title,
-          p.health_rating
-        FROM order_items oi
-        JOIN products p ON p.id = oi.product_id
-        WHERE oi.order_id = $1`,
-        [order.id]
-      );
+const items = await pool.query(
+  `SELECT 
+    oi.id,
+    oi.quantity,
+    oi.item_status,       -- 🔥 IMPORTANT
+    oi.delivery_date,     -- 🔥 IMPORTANT
+    oi.price_at_purchase,
+    p.title AS product_title,
+    p.health_rating
+  FROM order_items oi
+  JOIN products p ON p.id = oi.product_id
+  WHERE oi.order_id = $1`,
+  [order.id]
+);
 
       result.push({
         ...order,
