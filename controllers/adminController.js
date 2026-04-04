@@ -358,7 +358,7 @@ try{
 const orders = await pool.query(`
 SELECT
 o.id AS order_id,
-o.order_status,
+oi.item_status AS order_status,   -- 🔥 FIX
 o.created_at,
 v.business_name,
 p.title AS product_name,
@@ -393,7 +393,7 @@ FROM order_items oi
 JOIN orders o ON oi.order_id = o.id
 JOIN vendors v ON oi.vendor_id = v.id
 WHERE
-o.order_status='delivered'
+oi.item_status='delivered'
 AND oi.payout_status='pending'
 GROUP BY v.id
 `);
@@ -419,7 +419,7 @@ FROM orders o
 WHERE oi.order_id=o.id
 AND oi.vendor_id=$1
 AND oi.payout_status='pending'
-AND o.order_status='delivered'
+AND oi.item_status='delivered'
 `,[vendorId]);
 
 res.json({message:"Weekly payout cleared"});
