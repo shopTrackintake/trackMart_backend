@@ -1,6 +1,6 @@
 import pool from "../config/db.js";
-
-
+import { sendEmail } from "../utils/sendEmail.js";
+import crypto from "crypto";
 export const getVendorStats = async (req, res) => {
   try {
 
@@ -206,9 +206,11 @@ res.status(500).json({message:err.message});
 
 
 /* ================= CONFIRM ORDER ================= */
-export const confirmItem = async (req, res) => {
-  try {
 
+export const confirmItem = async (req, res) => {
+  const client = await pool.connect();
+
+  try {
     const { item_id, delivery_date } = req.body;
 
     if (!item_id) {
@@ -222,66 +224,137 @@ export const confirmItem = async (req, res) => {
     const today = new Date().toISOString().split("T")[0];
 
     if (delivery_date < today) {
-      return res.status(400).json({
-        message: "Invalid delivery date"
-      });
+      return res.status(400).json({ message: "Invalid delivery date" });
     }
 
-    const vendor = await pool.query(
+    await client.query("BEGIN");
+
+    // ✅ vendor check
+    const vendor = await client.query(
       "SELECT id FROM vendors WHERE user_id=$1",
       [req.user.id]
     );
 
     if (!vendor.rows.length) {
-      return res.status(404).json({ message: "Vendor not found" });
+      throw new Error("Vendor not found");
     }
 
     const vendorId = vendor.rows[0].id;
 
-    const itemCheck = await pool.query(
+    // ✅ check item
+    const itemCheck = await client.query(
       `SELECT * FROM order_items 
        WHERE id=$1 AND vendor_id=$2`,
       [item_id, vendorId]
     );
 
     if (!itemCheck.rows.length) {
-      return res.status(403).json({ message: "Not allowed" });
+      throw new Error("Not allowed");
     }
 
-    await pool.query(
+    // ❌ already confirmed
+    if (itemCheck.rows[0].item_status === "confirmed") {
+      throw new Error("Item already confirmed");
+    }
+
+    // ✅ get user email
+    const userData = await client.query(
+  `SELECT 
+     u.email,
+     o.id as order_id,
+     p.title as product_title
+   FROM orders o
+   JOIN users u ON o.user_id=u.id
+   JOIN order_items oi ON oi.order_id=o.id
+   JOIN products p ON oi.product_id=p.id
+   WHERE oi.id=$1`,
+  [item_id]
+);
+
+    if (!userData.rows.length) {
+      throw new Error("User email not found");
+    }
+
+   
+    const email = userData.rows[0].email;
+const orderId = userData.rows[0].order_id;
+const productTitle = userData.rows[0].product_title;
+    console.log("📧 Sending OTP to:", email);
+
+    // ✅ generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    const hashedOtp = crypto
+      .createHash("sha256")
+      .update(otp)
+      .digest("hex");
+
+    // ✅ DB update
+    await client.query(
       `UPDATE order_items
        SET item_status='confirmed',
-           delivery_date=$1
-       WHERE id=$2`,
-      [delivery_date, item_id]
+           delivery_date=$1,
+           otp=$2,
+           otp_used_at=NULL
+       WHERE id=$3`,
+      [delivery_date, hashedOtp, item_id]
     );
 
-    res.json({ message: "Item confirmed" });
+    await client.query("COMMIT"); // 🔥 COMMIT FIRST
+
+    // 🔥 EMAIL AFTER COMMIT (IMPORTANT)
+    try {
+      await sendEmail({
+        to: email,
+        subject: "Delivery OTP",
+        text: `
+Your OTP is: ${otp}
+
+Order ID: ${orderId.toString().slice(0,8)}
+Product: ${productTitle}
+
+Please share this OTP with delivery partner to receive your order.
+
+- TrackMart
+`
+      });
+    } catch (emailErr) {
+      console.log("📧 Email failed:", emailErr.message);
+      // ❗ order already confirmed, so ignore email failure
+    }
+
+    res.json({ message: "Item confirmed & OTP sent" });
 
   } catch (err) {
+    await client.query("ROLLBACK");
+
     console.log("🔥 ERROR:", err);
-    res.status(500).json({ message: err.message });
+
+    res.status(500).json({
+      message: err.message || "Failed to confirm item"
+    });
+
+  } finally {
+    client.release();
   }
 };
 
+
 export const markOrderDelivered = async (req, res) => {
   try {
+    const { item_id, otp } = req.body;
 
-    const { item_id } = req.body;
+    if (!otp) {
+      return res.status(400).json({ message: "OTP required" });
+    }
 
-    // ✅ 1. Get vendorId
     const vendor = await pool.query(
       "SELECT id FROM vendors WHERE user_id=$1",
       [req.user.id]
     );
 
-    if (!vendor.rows.length) {
-      return res.status(404).json({ message: "Vendor not found" });
-    }
-
     const vendorId = vendor.rows[0].id;
 
-    // ✅ 2. Check item belongs to this vendor
     const itemCheck = await pool.query(
       `SELECT * FROM order_items WHERE id=$1 AND vendor_id=$2`,
       [item_id, vendorId]
@@ -291,46 +364,31 @@ export const markOrderDelivered = async (req, res) => {
       return res.status(403).json({ message: "Not allowed" });
     }
 
-    const orderId = itemCheck.rows[0].order_id;
+    const item = itemCheck.rows[0];
 
-    // ✅ 3. Update ONLY this item
+    if (item.otp_used_at) {
+      return res.status(400).json({ message: "OTP already used" });
+    }
+
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+
+    if (hashedOtp !== item.otp) {
+      return res.status(400).json({ message: "Invalid OTP" });
+    }
+
     await pool.query(
       `UPDATE order_items
-       SET item_status='delivered'
+       SET item_status='delivered',
+           otp=NULL,
+           otp_used_at=NOW()
        WHERE id=$1`,
       [item_id]
     );
 
-    // ✅ 4. Get user for notification
-    const orderUser = await pool.query(
-      `SELECT user_id FROM orders WHERE id=$1`,
-      [orderId]
-    );
-
-    if (!orderUser.rows.length) {
-      return res.status(404).json({ message: "Order not found" });
-    }
-
-    const userId = orderUser.rows[0].user_id;
-
-    // ✅ 5. Notify customer (per item delivery)
-    await pool.query(
-      `INSERT INTO notifications (user_id,title,message,type)
-       VALUES ($1,$2,$3,$4)`,
-      [
-        userId,
-        "Item Delivered",
-        "One of your ordered items has been delivered",
-        "order"
-      ]
-    );
-
-    // ❌ IMPORTANT: Order status ko touch nahi karna
-
     res.json({ message: "Item delivered successfully" });
 
   } catch (err) {
-    console.log("🔥 ERROR:", err);
+    console.log(err);
     res.status(500).json({ message: err.message });
   }
 };
