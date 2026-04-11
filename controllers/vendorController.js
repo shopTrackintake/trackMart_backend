@@ -60,21 +60,21 @@ export const getVendorOrders = async (req, res) => {
     const vendorId = vendor.rows[0].id;
 
     const orders = await pool.query(
-      `SELECT 
-        o.id AS order_id,
-         oi.item_status,  
-      
-        o.created_at,
-        oi.quantity,
-        oi.vendor_earning,
-        p.title AS product_title
-      FROM order_items oi
-      JOIN orders o ON o.id = oi.order_id
-      LEFT JOIN products p ON p.id = oi.product_id
-      WHERE oi.vendor_id = $1
-      ORDER BY o.created_at DESC`,
-      [vendorId]
-    );
+  `SELECT 
+    oi.id AS item_id,       
+    o.id AS order_id,
+    oi.item_status,  
+    o.created_at,
+    oi.quantity,
+    oi.vendor_earning,
+    p.title AS product_title
+  FROM order_items oi
+  JOIN orders o ON o.id = oi.order_id
+  LEFT JOIN products p ON p.id = oi.product_id
+  WHERE oi.vendor_id = $1
+  ORDER BY o.created_at DESC`,
+  [vendorId]
+);
 
     res.json(orders.rows);
 
@@ -253,21 +253,21 @@ export const confirmItem = async (req, res) => {
     }
 
     // ❌ already confirmed
-    if (itemCheck.rows[0].item_status === "confirmed") {
-      throw new Error("Item already confirmed");
-    }
+    if (["confirmed", "delivered"].includes(itemCheck.rows[0].item_status)) {
+  throw new Error("Item already processed");
+}
 
     // ✅ get user email
     const userData = await client.query(
   `SELECT 
-     u.email,
-     o.id as order_id,
-     p.title as product_title
-   FROM orders o
-   JOIN users u ON o.user_id=u.id
-   JOIN order_items oi ON oi.order_id=o.id
-   JOIN products p ON oi.product_id=p.id
-   WHERE oi.id=$1`,
+  u.email,
+  o.id as order_id,
+  p.title as product_title
+FROM order_items oi
+JOIN orders o ON oi.order_id=o.id
+JOIN users u ON o.user_id=u.id
+JOIN products p ON oi.product_id=p.id
+WHERE oi.id=$1`,
   [item_id]
 );
 

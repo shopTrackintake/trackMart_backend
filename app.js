@@ -15,6 +15,7 @@ import customerRoutes from "./routes/customerRoutes.js";
 import paymentRoutes from "./routes/payment.js";
 import profileRoutes from "./routes/profileRoutes.js";
 import contactRoutes from "./routes/contactRoutes.js";
+import trackRoutes from "./routes/trackRoutes.js";
 const app = express();
 
 app.use(cors({
@@ -30,6 +31,7 @@ app.options("*", cors());
 
 app.use(express.json());
 app.use("/api/payment", paymentRoutes);
+app.use("/api/track", trackRoutes);
 app.use("/api/user", profileRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/wishlist", wishlistRoutes);
