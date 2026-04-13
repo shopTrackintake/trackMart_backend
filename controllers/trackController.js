@@ -12,30 +12,37 @@ export const getItemTracking = async (req, res) => {
     }
 
     const result = await pool.query(
-      `
-      SELECT 
-        oi.id AS item_id,
-        oi.item_status,
-        oi.delivery_date,
-        oi.latitude,
-    oi.longitude,
-        oi.vendor_id,
-
-        o.user_id,
       
-        p.title,
-        v.business_name AS vendor_name
+     `
+  SELECT 
+    oi.id AS item_id,
+    oi.item_status,
+    oi.delivery_date,
+    oi.latitude,
+    oi.longitude,
+    oi.vendor_id,
 
-      FROM order_items oi
-      JOIN orders o ON o.id = oi.order_id
-      JOIN products p ON p.id = oi.product_id
-      JOIN vendors v ON v.id = oi.vendor_id
-      WHERE oi.id = $1
-      `,
-      [itemId]
-    );
+    o.user_id,
+    o.address_id,
 
-    //  not found
+    a.latitude AS user_lat,   
+    a.longitude AS user_lng,  
+
+    p.title,
+    v.business_name AS vendor_name
+
+  FROM order_items oi
+  JOIN orders o ON o.id = oi.order_id
+  JOIN products p ON p.id = oi.product_id
+  JOIN vendors v ON v.id = oi.vendor_id
+LEFT JOIN addresses a ON a.id = o.address_id   -- 🔥 MAIN FIX
+
+  WHERE oi.id = $1
+  `,
+  [itemId]
+);
+
+    // not found
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Item not found" });
     }
@@ -73,7 +80,7 @@ export const getItemTracking = async (req, res) => {
       }
     }
 
-    // FINAL RESPONSE
+    //  FINAL RESPONSE
     return res.json({
       item_id: data.item_id,
       status: data.item_status,

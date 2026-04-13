@@ -1,9 +1,7 @@
 import pool from "../config/db.js";
 
 /* ================= ADD ADDRESS ================= */
-
 export const addAddress = async (req, res) => {
-
   try {
 
     const userId = req.user.id;
@@ -22,7 +20,7 @@ export const addAddress = async (req, res) => {
       longitude
     } = req.body;
 
-    if(
+    if (
       !full_name ||
       !phone ||
       !house_no ||
@@ -31,19 +29,49 @@ export const addAddress = async (req, res) => {
       !city ||
       !state ||
       !pincode
-    ){
+    ) {
       return res.status(400).json({
-        message:"Required fields missing"
+        message: "Required fields missing"
       });
     }
 
-    const result = await pool.query(
+    // STEP 1: prepare lat/lng
+    let lat = latitude;
+    let lng = longitude;
 
+    // 🔥 AUTO GEOCODE (if not provided)
+    if (!lat || !lng) {
+
+      const fullAddress = `${house_no}, ${street}, ${locality}, ${city}, ${state}, ${pincode}`;
+
+      try {
+        const geoRes = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(fullAddress)}`,
+          {
+            headers: {
+              "User-Agent": "trackmart-app"
+            }
+          }
+        );
+
+        const geoData = await geoRes.json();
+
+        if (geoData.length > 0) {
+          lat = geoData[0].lat;
+          lng = geoData[0].lon;
+        }
+
+      } catch (err) {
+        console.log("Geocode error:", err);
+      }
+    }
+
+    // STEP 2: insert
+    const result = await pool.query(
       `INSERT INTO addresses
       (user_id,full_name,phone,house_no,street,locality,landmark,city,state,pincode,latitude,longitude)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       RETURNING *`,
-
       [
         userId,
         full_name,
@@ -55,28 +83,23 @@ export const addAddress = async (req, res) => {
         city,
         state,
         pincode,
-        latitude || null,
-        longitude || null
+        lat,
+        lng
       ]
-
     );
 
     res.json(result.rows[0]);
 
-  }
+  } catch (err) {
 
-  catch(err){
-
-    console.log("ADDRESS ERROR:",err);
+    console.log("ADDRESS ERROR:", err);
 
     res.status(500).json({
-      message:err.message
+      message: err.message
     });
 
   }
-
 };
-
 
 /* ================= GET ADDRESSES ================= */
 export const getAddresses = async (req, res) => {
