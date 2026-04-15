@@ -358,7 +358,7 @@ try{
 const orders = await pool.query(`
 SELECT
 o.id AS order_id,
-oi.item_status AS order_status,   
+oi.item_status AS order_status,   -- 🔥 FIX
 o.created_at,
 v.business_name,
 p.title AS product_name,
@@ -388,7 +388,7 @@ SELECT
 v.id as vendor_id,
 v.business_name,
 
-
+-- 🔥 ONLINE payout only
 COALESCE(SUM(
   CASE 
     WHEN oi.commission_amount = 0
@@ -397,6 +397,7 @@ COALESCE(SUM(
   END
 ),0) as total_earning,
 
+-- 🔥 COD commission (vendor owes platform)
 COALESCE(SUM(
   CASE 
     WHEN oi.commission_amount > 0
@@ -428,7 +429,20 @@ try{
 const { vendorId } = req.params;
 const { reference } = req.body;
 
-//  ONLINE earnings
+// 🔥 check pending exists
+const check = await pool.query(`
+SELECT id FROM order_items
+WHERE vendor_id=$1
+AND payout_status='pending'
+AND item_status='delivered'
+LIMIT 1
+`,[vendorId]);
+
+if(!check.rows.length){
+  return res.json({ message: "No pending payout" });
+}
+
+// 🔥 ONLINE
 const onlineRes = await pool.query(`
 SELECT COALESCE(SUM(vendor_earning),0) as total
 FROM order_items
@@ -438,7 +452,7 @@ AND commission_amount = 0
 AND item_status='delivered'
 `,[vendorId]);
 
-//  COD dues
+// 🔥 COD
 const codRes = await pool.query(`
 SELECT COALESCE(SUM(commission_amount),0) as total
 FROM order_items
@@ -451,37 +465,29 @@ AND item_status='delivered'
 const onlineAmt = Number(onlineRes.rows[0].total || 0);
 const codDue = Number(codRes.rows[0].total || 0);
 
-// 🧠 safety
-if(onlineAmt < 0 || codDue < 0){
-  return res.status(400).json({message:"Invalid payout calculation"});
-}
-
-// 🔥 NET
 const finalPay = onlineAmt - codDue;
-
 let remainingDue = 0;
+
+// 🔥 TRANSACTION START
+await pool.query("BEGIN");
 
 // ================= CASE 1 =================
 if(finalPay > 0){
 
-  //  ONLINE → paid + reference
   await pool.query(`
   UPDATE order_items
-  SET 
-    payout_status='paid',
-    payout_reference=$1
+  SET payout_status='paid',
+      payout_reference=$1
   WHERE vendor_id=$2
   AND payout_status='pending'
   AND commission_amount = 0
   AND item_status='delivered'
   `,[reference, vendorId]);
 
-  //  COD → adjusted + SAME reference
   await pool.query(`
   UPDATE order_items
-  SET 
-    payout_status='adjusted',
-    payout_reference=$1
+  SET payout_status='adjusted',
+      payout_reference=$1
   WHERE vendor_id=$2
   AND payout_status='pending'
   AND commission_amount > 0
@@ -495,9 +501,6 @@ else{
 
   remainingDue = Math.abs(finalPay);
 
-  // vendor ko kuch nahi milega
-  // COD bhi pending hi rahega
-
   await pool.query(`
   INSERT INTO vendor_wallet (vendor_id, pending_amount)
   VALUES($1,$2)
@@ -506,6 +509,8 @@ else{
   `,[vendorId, remainingDue]);
 
 }
+
+await pool.query("COMMIT");
 
 // ================= RESPONSE =================
 res.json({
@@ -517,6 +522,7 @@ remaining_due: remainingDue
 });
 
 }catch(err){
+await pool.query("ROLLBACK");
 console.log("PAYOUT ERROR:", err);
 res.status(500).json({message:err.message});
 }
