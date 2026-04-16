@@ -9,6 +9,7 @@ export const getVendorStats = async (req, res) => {
       [req.user.id]
     );
 
+    
     if (!vendor.rows.length) {
       return res.status(404).json({ message: "Vendor not found" });
     }
@@ -131,7 +132,7 @@ try{
 
 const { id } = req.params;
 
-/* 🔥 VENDOR CHECK */
+/*  VENDOR CHECK */
 const vendor = await pool.query(
   "SELECT id FROM vendors WHERE user_id=$1",
   [req.user.id]
@@ -143,7 +144,7 @@ if (!vendor.rows.length) {
 
 const vendorId = vendor.rows[0].id;
 
-/* 🔥 ORDER */
+/*  ORDER */
 const order = await pool.query(
 `
 SELECT 
@@ -172,7 +173,7 @@ if (!order.rows.length) {
   return res.status(404).json({ message: "Order not found" });
 }
 
-/* 🔥 ITEMS (IMPORTANT FIX) */
+/*  ITEMS (IMPORTANT FIX) */
 const items = await pool.query(
 `
 SELECT 
@@ -229,7 +230,7 @@ export const confirmItem = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // ✅ vendor check
+    // vendor check
     const vendor = await client.query(
       "SELECT id FROM vendors WHERE user_id=$1",
       [req.user.id]
@@ -241,7 +242,7 @@ export const confirmItem = async (req, res) => {
 
     const vendorId = vendor.rows[0].id;
 
-    // ✅ check item
+    //  check item
     const itemCheck = await client.query(
       `SELECT * FROM order_items 
        WHERE id=$1 AND vendor_id=$2`,
@@ -252,12 +253,12 @@ export const confirmItem = async (req, res) => {
       throw new Error("Not allowed");
     }
 
-    // ❌ already confirmed
+    //  already confirmed
     if (["confirmed", "delivered"].includes(itemCheck.rows[0].item_status)) {
   throw new Error("Item already processed");
 }
 
-    // ✅ get user email
+    //  get user email
     const userData = await client.query(
   `SELECT 
   u.email,
@@ -281,7 +282,7 @@ const orderId = userData.rows[0].order_id;
 const productTitle = userData.rows[0].product_title;
     console.log("📧 Sending OTP to:", email);
 
-    // ✅ generate OTP
+    //  generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
     const hashedOtp = crypto
@@ -289,7 +290,7 @@ const productTitle = userData.rows[0].product_title;
       .update(otp)
       .digest("hex");
 
-    // ✅ DB update
+    //  DB update
     await client.query(
       `UPDATE order_items
        SET item_status='confirmed',
@@ -300,9 +301,9 @@ const productTitle = userData.rows[0].product_title;
       [delivery_date, hashedOtp, item_id]
     );
 
-    await client.query("COMMIT"); // 🔥 COMMIT FIRST
+    await client.query("COMMIT"); 
 
-    // 🔥 EMAIL AFTER COMMIT (IMPORTANT)
+    //  EMAIL AFTER COMMIT (IMPORTANT)
     try {
       await sendEmail({
         to: email,
@@ -407,37 +408,39 @@ return res.status(404).json({message:"Vendor not found"});
 
 const vendorId = vendor.rows[0].id;
 
-/* TOTAL RECEIVED */
-
-const received = await pool.query(
-`
+/* TOTAL RECEIVED (paid payouts) */
+const received = await pool.query(`
 SELECT COALESCE(SUM(vendor_earning),0) as total
 FROM order_items
 WHERE vendor_id=$1
 AND payout_status='paid'
-`,
-[vendorId]
-);
+`,[vendorId]);
 
-/* TOTAL PENDING */
-
-const pending = await pool.query(
-`
+/* TOTAL PENDING (ONLY ONLINE SHOULD COUNT) */
+const pending = await pool.query(`
 SELECT COALESCE(SUM(vendor_earning),0) as total
 FROM order_items
 WHERE vendor_id=$1
 AND payout_status='pending'
-`,
-[vendorId]
-);
+AND commission_amount = 0 
+`,[vendorId]);
+
+/*  COD DUES (REAL FIX) */
+const codDue = await pool.query(`
+SELECT COALESCE(SUM(commission_amount),0) as total
+FROM order_items
+WHERE vendor_id=$1
+AND item_status='delivered'
+AND payout_status='pending'
+AND commission_amount > 0   
+`,[vendorId]);
 
 /* PAYMENT HISTORY */
-
-const history = await pool.query(
-`
+const history = await pool.query(`
 SELECT
 oi.vendor_earning,
 oi.payout_status,
+oi.payout_reference,
 o.created_at,
 p.title as product_title
 FROM order_items oi
@@ -445,22 +448,20 @@ JOIN orders o ON oi.order_id=o.id
 LEFT JOIN products p ON oi.product_id=p.id
 WHERE oi.vendor_id=$1
 ORDER BY o.created_at DESC
-`,
-[vendorId]
-);
+`,[vendorId]);
 
 res.json({
-received: received.rows[0].total,
-pending: pending.rows[0].total,
+received: Number(received.rows[0].total || 0),
+pending: Number(pending.rows[0].total || 0),
+
+//  REAL-TIME COD DUES
+dues: Number(codDue.rows[0].total || 0),
+
 history: history.rows
 });
 
-  
 }catch(err){
-
 console.log(err);
 res.status(500).json({message:err.message});
-
 }
-
 };

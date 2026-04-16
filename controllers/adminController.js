@@ -381,20 +381,38 @@ res.status(500).json({message:err.message});
 
 };
 export const getVendorWeeklyEarnings = async (req,res)=>{
-
 try{
 
 const data = await pool.query(`
 SELECT
 v.id as vendor_id,
 v.business_name,
-COALESCE(SUM(oi.vendor_earning),0) as total_earning
+
+-- 🔥 ONLINE payout only
+COALESCE(SUM(
+  CASE 
+    WHEN oi.commission_amount = 0
+    THEN oi.vendor_earning
+    ELSE 0
+  END
+),0) as total_earning,
+
+-- 🔥 COD commission (vendor owes platform)
+COALESCE(SUM(
+  CASE 
+    WHEN oi.commission_amount > 0
+    THEN oi.commission_amount
+    ELSE 0
+  END
+),0) as cod_due
+
 FROM order_items oi
-JOIN orders o ON oi.order_id = o.id
 JOIN vendors v ON oi.vendor_id = v.id
+
 WHERE
 oi.item_status='delivered'
 AND oi.payout_status='pending'
+
 GROUP BY v.id
 `);
 
@@ -404,31 +422,110 @@ res.json(data.rows);
 console.log(err);
 res.status(500).json({message:err.message});
 }
-
 };
 export const clearVendorPayment = async (req,res)=>{
-
 try{
 
 const { vendorId } = req.params;
+const { reference } = req.body;
 
-await pool.query(`
-UPDATE order_items oi
-SET payout_status='paid'
-FROM orders o
-WHERE oi.order_id=o.id
-AND oi.vendor_id=$1
-AND oi.payout_status='pending'
-AND oi.item_status='delivered'
+// 🔥 check pending exists
+const check = await pool.query(`
+SELECT id FROM order_items
+WHERE vendor_id=$1
+AND payout_status='pending'
+AND item_status='delivered'
+LIMIT 1
 `,[vendorId]);
 
-res.json({message:"Weekly payout cleared"});
-
-}catch(err){
-console.log(err);
-res.status(500).json({message:err.message});
+if(!check.rows.length){
+  return res.json({ message: "No pending payout" });
 }
 
+// 🔥 ONLINE
+const onlineRes = await pool.query(`
+SELECT COALESCE(SUM(vendor_earning),0) as total
+FROM order_items
+WHERE vendor_id=$1
+AND payout_status='pending'
+AND commission_amount = 0
+AND item_status='delivered'
+`,[vendorId]);
+
+// 🔥 COD
+const codRes = await pool.query(`
+SELECT COALESCE(SUM(commission_amount),0) as total
+FROM order_items
+WHERE vendor_id=$1
+AND payout_status='pending'
+AND commission_amount > 0
+AND item_status='delivered'
+`,[vendorId]);
+
+const onlineAmt = Number(onlineRes.rows[0].total || 0);
+const codDue = Number(codRes.rows[0].total || 0);
+
+const finalPay = onlineAmt - codDue;
+let remainingDue = 0;
+
+// 🔥 TRANSACTION START
+await pool.query("BEGIN");
+
+// ================= CASE 1 =================
+if(finalPay > 0){
+
+  await pool.query(`
+  UPDATE order_items
+  SET payout_status='paid',
+      payout_reference=$1
+  WHERE vendor_id=$2
+  AND payout_status='pending'
+  AND commission_amount = 0
+  AND item_status='delivered'
+  `,[reference, vendorId]);
+
+  await pool.query(`
+  UPDATE order_items
+  SET payout_status='adjusted',
+      payout_reference=$1
+  WHERE vendor_id=$2
+  AND payout_status='pending'
+  AND commission_amount > 0
+  AND item_status='delivered'
+  `,[reference, vendorId]);
+
+}
+
+// ================= CASE 2 =================
+else{
+
+  remainingDue = Math.abs(finalPay);
+
+  await pool.query(`
+  INSERT INTO vendor_wallet (vendor_id, pending_amount)
+  VALUES($1,$2)
+  ON CONFLICT (vendor_id)
+  DO UPDATE SET pending_amount = vendor_wallet.pending_amount + $2
+  `,[vendorId, remainingDue]);
+
+}
+
+await pool.query("COMMIT");
+
+// ================= RESPONSE =================
+res.json({
+message:"Weekly payout processed",
+online: onlineAmt,
+cod: codDue,
+final: Math.max(0, finalPay),
+remaining_due: remainingDue
+});
+
+}catch(err){
+await pool.query("ROLLBACK");
+console.log("PAYOUT ERROR:", err);
+res.status(500).json({message:err.message});
+}
 };
 export const getVendorDetails = async (req,res)=>{
 
