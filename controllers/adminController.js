@@ -558,6 +558,7 @@ res.json(vendor.rows[0]);
 console.log(err);
 res.status(500).json({message:err.message});
 
+
 }
 
 };
