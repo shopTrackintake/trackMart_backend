@@ -206,7 +206,20 @@ export const createProduct = async (req, res) => {
 
     const vendor_id = vendor.rows[0].id;
     const vendorName = vendor.rows[0].business_name;
+// 🔥 CHECK DUPLICATE PRODUCT
+const existingProduct = await pool.query(
+  `SELECT id FROM products 
+   WHERE vendor_id=$1 
+   AND LOWER(title)=LOWER($2)
+   AND status='active'`,
+  [vendor_id, title]
+);
 
+if (existingProduct.rows.length > 0) {
+  return res.status(400).json({
+    message: "Product already exists for this vendor"
+  });
+}
     /* IMAGE PATHS */
 
     const product_image =
@@ -324,7 +337,13 @@ export const getVendorProducts = async (req, res) => {
   } catch (err) {
 
     console.log(err);
-    res.status(500).json({ message: err.message });
+    if (err.code === "23505") {
+  return res.status(400).json({
+    message: "Duplicate product not allowed"
+  });
+}
+
+res.status(500).json({ message: err.message });
 
   }
 
