@@ -13,7 +13,7 @@ export const getProductById = async (req, res) => {
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN vendors v ON p.vendor_id = v.id
-      WHERE p.id = $1 AND p.status='active'
+      WHERE p.id = $1 AND (p.status = 'active' OR p.status IS NULL OR p.status != 'inactive')
       `,
       [id]
     );
@@ -49,7 +49,7 @@ export const getProducts = async (req, res) => {
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN vendors v ON p.vendor_id = v.id
-      WHERE p.status='active'
+      WHERE (p.status = 'active' OR p.status IS NULL OR p.status != 'inactive')
     `;
 
     let values = [];
@@ -149,6 +149,7 @@ export const createProduct = async (req, res) => {
       title,
       description,
       price,
+      discount_percent,
       stock,
       size,
       category_id,
@@ -172,6 +173,7 @@ export const createProduct = async (req, res) => {
     }
 
     const parsedPrice = Number(price);
+    const parsedDiscount = discount_percent ? Number(discount_percent) : 0;
     const parsedStock = Number(stock);
     const parsedCalories = calories ? Number(calories) : null;
     const parsedSugar = sugar ? Number(sugar) : null;
@@ -206,20 +208,22 @@ export const createProduct = async (req, res) => {
 
     const vendor_id = vendor.rows[0].id;
     const vendorName = vendor.rows[0].business_name;
-// 🔥 CHECK DUPLICATE PRODUCT
-const existingProduct = await pool.query(
-  `SELECT id FROM products 
-   WHERE vendor_id=$1 
-   AND LOWER(title)=LOWER($2)
-   AND status='active'`,
-  [vendor_id, title]
-);
 
-if (existingProduct.rows.length > 0) {
-  return res.status(400).json({
-    message: "Product already exists for this vendor"
-  });
-}
+    // CHECK DUPLICATE PRODUCT
+    const existingProduct = await pool.query(
+      `SELECT id FROM products 
+       WHERE vendor_id=$1 
+       AND LOWER(title)=LOWER($2)
+       AND status='active'`,
+      [vendor_id, title]
+    );
+
+    if (existingProduct.rows.length > 0) {
+      return res.status(400).json({
+        message: "Product already exists for this vendor"
+      });
+    }
+
     /* IMAGE PATHS */
 
     const product_image =
@@ -234,25 +238,25 @@ if (existingProduct.rows.length > 0) {
       `
       INSERT INTO products
       (vendor_id,category_id,title,description,
-      price,stock,size,
+      price,discount_percent,stock,size,
       calories,sugar,fat,protein,
       care_type,concern_type,
       ingredients,health_rating,
       how_to_use,making_process,
       image_url,ingredients_image_url)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-      $11,$12,$13,$14,$15,$16,$17,$18,$19)
+      $11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
       RETURNING *
       `,
       [
         vendor_id,
-        category_id,
+        category_id || null,
         title,
         description,
         parsedPrice,
+        parsedDiscount,
         parsedStock,
         parsedSize,
-      
         parsedCalories,
         parsedSugar,
         parsedFat,
@@ -304,6 +308,137 @@ if (existingProduct.rows.length > 0) {
 };
 
 
+/* ================= UPDATE PRODUCT ================= */
+
+export const updateProduct = async (req, res) => {
+  try {
+    if (req.user.role !== "vendor") {
+      return res.status(403).json({ message: "Only vendors allowed" });
+    }
+
+    const { id } = req.params;
+
+    const vendor = await pool.query(
+      "SELECT id FROM vendors WHERE user_id=$1",
+      [req.user.id]
+    );
+
+    if (!vendor.rows.length) {
+      return res.status(400).json({ message: "Vendor profile missing" });
+    }
+
+    const vendor_id = vendor.rows[0].id;
+
+    const existing = await pool.query(
+      "SELECT * FROM products WHERE id=$1 AND vendor_id=$2 AND (status = 'active' OR status IS NULL OR status != 'inactive')",
+      [id, vendor_id]
+    );
+
+    if (!existing.rows.length) {
+      return res.status(404).json({ message: "Product not found or unauthorized" });
+    }
+
+    const {
+      title,
+      description,
+      price,
+      discount_percent,
+      stock,
+      size,
+      category_id,
+      calories,
+      care_type,
+      concern_type,
+      sugar,
+      fat,
+      protein,
+      ingredients,
+      how_to_use,
+      making_process
+    } = req.body;
+
+    const parsedPrice = price !== undefined ? Number(price) : Number(existing.rows[0].price);
+    const parsedDiscount = discount_percent !== undefined ? Number(discount_percent) : (existing.rows[0].discount_percent || 0);
+    const parsedStock = stock !== undefined ? Number(stock) : Number(existing.rows[0].stock);
+    const parsedCalories = calories !== undefined && calories !== "" ? Number(calories) : existing.rows[0].calories;
+    const parsedSugar = sugar !== undefined && sugar !== "" ? Number(sugar) : existing.rows[0].sugar;
+    const parsedFat = fat !== undefined && fat !== "" ? Number(fat) : existing.rows[0].fat;
+    const parsedProtein = protein !== undefined && protein !== "" ? Number(protein) : existing.rows[0].protein;
+
+    let health_rating = "Healthy";
+    if (
+      (parsedSugar && parsedSugar > 20) ||
+      (parsedFat && parsedFat > 20) ||
+      (parsedCalories && parsedCalories > 500)
+    ) {
+      health_rating = "Unhealthy";
+    }
+
+    const product_image =
+      req.files?.product_image?.[0]?.path || existing.rows[0].image_url;
+
+    const ingredients_image =
+      req.files?.ingredients_image?.[0]?.path || existing.rows[0].ingredients_image_url;
+
+    const updated = await pool.query(
+      `
+      UPDATE products
+      SET title=$1,
+          description=$2,
+          price=$3,
+          discount_percent=$4,
+          stock=$5,
+          size=$6,
+          category_id=$7,
+          calories=$8,
+          sugar=$9,
+          fat=$10,
+          protein=$11,
+          care_type=$12,
+          concern_type=$13,
+          ingredients=$14,
+          health_rating=$15,
+          how_to_use=$16,
+          making_process=$17,
+          image_url=$18,
+          ingredients_image_url=$19
+      WHERE id=$20 AND vendor_id=$21
+      RETURNING *
+      `,
+      [
+        title || existing.rows[0].title,
+        description !== undefined ? description : existing.rows[0].description,
+        parsedPrice,
+        parsedDiscount,
+        parsedStock,
+        size || existing.rows[0].size,
+        category_id || existing.rows[0].category_id,
+        parsedCalories,
+        parsedSugar,
+        parsedFat,
+        parsedProtein,
+        care_type !== undefined ? care_type : existing.rows[0].care_type,
+        concern_type !== undefined ? concern_type : existing.rows[0].concern_type,
+        ingredients !== undefined ? ingredients : existing.rows[0].ingredients,
+        health_rating,
+        how_to_use !== undefined ? how_to_use : existing.rows[0].how_to_use,
+        making_process !== undefined ? making_process : existing.rows[0].making_process,
+        product_image,
+        ingredients_image,
+        id,
+        vendor_id
+      ]
+    );
+
+    res.json(updated.rows[0]);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+
 /* ================= GET VENDOR PRODUCTS ================= */
 
 export const getVendorProducts = async (req, res) => {
@@ -326,7 +461,7 @@ export const getVendorProducts = async (req, res) => {
       SELECT *
       FROM products
       WHERE vendor_id=$1
-      AND status='active'
+      AND (status != 'deleted' OR status IS NULL)
       ORDER BY created_at DESC
       `,
       [vendorId]
@@ -338,17 +473,63 @@ export const getVendorProducts = async (req, res) => {
 
     console.log(err);
     if (err.code === "23505") {
-  return res.status(400).json({
-    message: "Duplicate product not allowed"
-  });
-}
+      return res.status(400).json({
+        message: "Duplicate product not allowed"
+      });
+    }
 
-res.status(500).json({ message: err.message });
+    res.status(500).json({ message: err.message });
 
   }
 
 };
 
+/* ================= TOGGLE PRODUCT STATUS (ACTIVATE / DEACTIVATE) ================= */
+
+export const toggleProductStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const vendor = await pool.query(
+      "SELECT id FROM vendors WHERE user_id=$1",
+      [req.user.id]
+    );
+
+    if (!vendor.rows.length) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const vendorId = vendor.rows[0].id;
+
+    const product = await pool.query(
+      "SELECT id, title, status FROM products WHERE id=$1 AND vendor_id=$2",
+      [id, vendorId]
+    );
+
+    if (!product.rows.length) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    const currentStatus = product.rows[0].status || "active";
+    const newStatus = currentStatus === "inactive" ? "active" : "inactive";
+
+    const updated = await pool.query(
+      "UPDATE products SET status=$1 WHERE id=$2 AND vendor_id=$3 RETURNING *",
+      [newStatus, id, vendorId]
+    );
+
+    res.json({
+      message: newStatus === "active" 
+        ? `"${product.rows[0].title}" is now Available & Live in store`
+        : `"${product.rows[0].title}" has been Deactivated / Made Unavailable`,
+      product: updated.rows[0]
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
+};
 
 /* ================= DELETE PRODUCT ================= */
 
@@ -370,11 +551,11 @@ export const deleteProduct = async (req, res) => {
     const vendorId = vendor.rows[0].id;
 
     await pool.query(
-      "UPDATE products SET status='inactive' WHERE id=$1 AND vendor_id=$2",
+      "UPDATE products SET status='deleted' WHERE id=$1 AND vendor_id=$2",
       [id, vendorId]
     );
 
-    res.json({ message: "Product removed from store" });
+    res.json({ message: "Product deleted from store" });
 
   } catch (err) {
 

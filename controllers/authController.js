@@ -9,16 +9,24 @@ export const register = async (req, res) => {
 
   try {
 
-   const {
-name,
-email,
-password,
-role,
-business_name,
-phone,
-shop_address,
-upi_id
-} = req.body;
+    const {
+      name,
+      email,
+      password,
+      role,
+      owner_name,
+      business_name,
+      phone,
+      shop_address,
+      pincode,
+      bank_holder_name,
+      bank_account_number,
+      bank_ifsc,
+      upi_id,
+      pan_number,
+      gst_number,
+      fssai_number
+    } = req.body;
 
     /* CHECK EMAIL ALREADY EXISTS */
 
@@ -45,7 +53,7 @@ upi_id
       VALUES ($1,$2,$3,$4)
       RETURNING id,role
       `,
-      [name, email, hashedPassword, role]
+      [name || owner_name || "Vendor", email, hashedPassword, role]
     );
 
     const userId = user.rows[0].id;
@@ -57,10 +65,26 @@ upi_id
   await pool.query(
 `
 INSERT INTO vendors
-(user_id,business_name,phone,shop_address,upi_id,kyc_status)
-VALUES ($1,$2,$3,$4,$5,'pending')
+(user_id, business_name, owner_name, phone, shop_address, pincode,
+ bank_holder_name, bank_account_number, bank_ifsc, upi_id,
+ pan_number, gst_number, fssai_number, kyc_status)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending')
 `,
-[userId,business_name,phone,shop_address,upi_id]
+[
+  userId,
+  business_name,
+  owner_name || name,
+  phone,
+  shop_address,
+  pincode,
+  bank_holder_name,
+  bank_account_number,
+  bank_ifsc,
+  upi_id,
+  pan_number,
+  gst_number,
+  fssai_number
+]
 );
 
   /* GET ADMIN */
@@ -69,22 +93,24 @@ VALUES ($1,$2,$3,$4,$5,'pending')
     "SELECT id FROM users WHERE role='admin' LIMIT 1"
   );
 
-  const adminId = admin.rows[0].id;
+  const adminId = admin.rows[0]?.id;
 
   /* SEND NOTIFICATION */
 
-  await pool.query(
-  `
-  INSERT INTO notifications(user_id,title,message,type)
-  VALUES($1,$2,$3,$4)
-  `,
-  [
-  adminId,
-  "New Vendor Registration",
-  `${business_name} has registered. Please approve.`,
-  "vendor_register"
-  ]
-  );
+  if (adminId) {
+    await pool.query(
+    `
+    INSERT INTO notifications(user_id,title,message,type)
+    VALUES($1,$2,$3,$4)
+    `,
+    [
+    adminId,
+    "New Vendor Registration",
+    `${business_name} has registered with complete business & compliance details. Please review and approve.`,
+    "vendor_register"
+    ]
+    );
+  }
 
 }
 

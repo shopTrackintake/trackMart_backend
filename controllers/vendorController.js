@@ -68,7 +68,9 @@ export const getVendorOrders = async (req, res) => {
     o.created_at,
     oi.quantity,
     oi.vendor_earning,
-    p.title AS product_title
+    p.title AS product_title,
+    p.image_url,
+    p.price AS unit_price
   FROM order_items oi
   JOIN orders o ON o.id = oi.order_id
   LEFT JOIN products p ON p.id = oi.product_id
@@ -290,7 +292,7 @@ const productTitle = userData.rows[0].product_title;
       .update(otp)
       .digest("hex");
 
-    //  DB update
+    // DB update
     await client.query(
       `UPDATE order_items
        SET item_status='confirmed',
@@ -299,6 +301,14 @@ const productTitle = userData.rows[0].product_title;
            otp_used_at=NULL
        WHERE id=$3`,
       [delivery_date, hashedOtp, item_id]
+    );
+
+    // Deduct product inventory stock upon vendor confirmation
+    await client.query(
+      `UPDATE products
+       SET stock = GREATEST(0, stock - $1)
+       WHERE id = $2`,
+      [itemCheck.rows[0].quantity, itemCheck.rows[0].product_id]
     );
 
     await client.query("COMMIT"); 
@@ -408,7 +418,7 @@ return res.status(404).json({message:"Vendor not found"});
 
 const vendorId = vendor.rows[0].id;
 
-/* TOTAL RECEIVED (paid payouts) */
+/* TOTAL RECEIVED (paid payouts & COD collected) */
 const received = await pool.query(`
 SELECT COALESCE(SUM(vendor_earning),0) as total
 FROM order_items
@@ -416,23 +426,25 @@ WHERE vendor_id=$1
 AND payout_status='paid'
 `,[vendorId]);
 
-/* TOTAL PENDING (ONLY ONLINE SHOULD COUNT) */
+/* TOTAL PENDING (ONLINE PENDING PAYOUTS) */
 const pending = await pool.query(`
-SELECT COALESCE(SUM(vendor_earning),0) as total
-FROM order_items
-WHERE vendor_id=$1
-AND payout_status='pending'
-AND commission_amount = 0 
+SELECT COALESCE(SUM(oi.vendor_earning),0) as total
+FROM order_items oi
+JOIN orders o ON oi.order_id = o.id
+WHERE oi.vendor_id=$1
+AND oi.payout_status='pending'
+AND (o.payment_method = 'ONLINE' OR o.payment_method IS NULL)
 `,[vendorId]);
 
-/*  COD DUES (REAL FIX) */
+/* COD DUES (0% commission) */
 const codDue = await pool.query(`
-SELECT COALESCE(SUM(commission_amount),0) as total
-FROM order_items
-WHERE vendor_id=$1
-AND item_status='delivered'
-AND payout_status='pending'
-AND commission_amount > 0   
+SELECT COALESCE(SUM(oi.commission_amount),0) as total
+FROM order_items oi
+JOIN orders o ON oi.order_id = o.id
+WHERE oi.vendor_id=$1
+AND oi.item_status='delivered'
+AND oi.payout_status='pending'
+AND o.payment_method = 'COD'
 `,[vendorId]);
 
 /* PAYMENT HISTORY */
@@ -442,6 +454,7 @@ oi.vendor_earning,
 oi.payout_status,
 oi.payout_reference,
 o.created_at,
+o.payment_method,
 p.title as product_title
 FROM order_items oi
 JOIN orders o ON oi.order_id=o.id
@@ -453,10 +466,7 @@ ORDER BY o.created_at DESC
 res.json({
 received: Number(received.rows[0].total || 0),
 pending: Number(pending.rows[0].total || 0),
-
-//  REAL-TIME COD DUES
 dues: Number(codDue.rows[0].total || 0),
-
 history: history.rows
 });
 

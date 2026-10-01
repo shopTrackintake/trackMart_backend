@@ -51,13 +51,9 @@ address_id
       const productTotal =
         Number(item.price) * Number(item.quantity);
 
-     
-
-      const commission =
-        productTotal * 0.10;
-
-      const earning =
-        (productTotal - commission);
+      // 0% Platform Commission on all orders (COD & Online)
+      const commission = 0;
+      const earning = productTotal;
 
       await pool.query(
         `INSERT INTO order_items
@@ -72,7 +68,7 @@ address_id
           item.quantity,
           commission,
           earning,
-          "pending"
+          payment_method === "COD" ? "paid" : "pending"
         ]
       );
 
