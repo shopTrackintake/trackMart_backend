@@ -42,6 +42,9 @@ pool.query(`
   ADD COLUMN IF NOT EXISTS gst_number VARCHAR(50),
   ADD COLUMN IF NOT EXISTS fssai_number VARCHAR(50);
 
+  ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
+
   CREATE TABLE IF NOT EXISTS notifications (
     id SERIAL PRIMARY KEY,
     user_id INT NOT NULL,

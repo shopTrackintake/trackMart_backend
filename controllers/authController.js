@@ -49,11 +49,11 @@ export const register = async (req, res) => {
 
     const user = await pool.query(
       `
-      INSERT INTO users (name,email,password_hash,role)
-      VALUES ($1,$2,$3,$4)
+      INSERT INTO users (name,email,password_hash,role,phone)
+      VALUES ($1,$2,$3,$4,$5)
       RETURNING id,role
       `,
-      [name || owner_name || "Vendor", email, hashedPassword, role]
+      [name || owner_name || "Vendor", email, hashedPassword, role, phone || null]
     );
 
     const userId = user.rows[0].id;
