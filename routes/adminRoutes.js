@@ -13,7 +13,7 @@ deleteVendor
 } from "../controllers/adminController.js";
 
 import { protect } from "../middleware/auth.js";
-import { getAdminOrders } from "../controllers/adminController.js";
+import { getAdminOrders, updateOrderRefundOrPaymentStatus } from "../controllers/adminController.js";
 import {
 getVendorWeeklyEarnings,
 clearVendorPayment
@@ -32,6 +32,7 @@ router.post("/vendor-payout/:vendorId",protect,clearVendorPayment);
 
 router.get("/pending-vendors",protect,getPendingVendors);
 router.get("/orders",protect,getAdminOrders);
+router.put("/orders/update-status",protect,updateOrderRefundOrPaymentStatus);
 /* ACTIONS */
 router.get("/products",protect,getAdminProducts);
 router.delete("/products/:id",protect,deleteAdminProduct);

@@ -47,3 +47,29 @@ export const markNotificationRead = async (req, res) => {
 
   }
 };
+
+export const markAllNotificationsRead = async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE notifications SET is_read=true WHERE user_id=$1`,
+      [req.user.id]
+    );
+    res.json({ message: "All notifications marked as read" });
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const clearAllNotifications = async (req, res) => {
+  try {
+    await pool.query(
+      `DELETE FROM notifications WHERE user_id=$1`,
+      [req.user.id]
+    );
+    res.json({ message: "All notifications cleared" });
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ message: err.message });
+  }
+};
