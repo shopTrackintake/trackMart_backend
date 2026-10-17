@@ -1,5 +1,6 @@
 // controllers/profileController.js
 import pool from "../config/db.js";
+import bcrypt from "bcryptjs";
 
 /* ================= GET PROFILE ================= */
 export const getProfile = async (req, res) => {
@@ -13,6 +14,7 @@ export const getProfile = async (req, res) => {
         u.id,
         u.name,
         u.email,
+        u.phone as user_phone,
         u.role,
         v.id as vendor_id,
         v.business_name,
@@ -73,6 +75,7 @@ export const getProfile = async (req, res) => {
       id: user.id,
       name: user.name,
       email: user.email,
+      phone: user.user_phone,
       role: user.role
     });
 
@@ -156,11 +159,17 @@ export const updateProfile = async (req, res) => {
       });
     }
 
-    // customer update (name)
-    const { name } = req.body;
-    if (name) {
-      await pool.query("UPDATE users SET name=$1 WHERE id=$2", [name, userId]);
-      return res.json({ message: "Profile name updated" });
+    // customer update (name, phone)
+    const { name, phone } = req.body;
+    if (name || phone) {
+      if (name && phone) {
+        await pool.query("UPDATE users SET name=$1, phone=$2 WHERE id=$3", [name, phone, userId]);
+      } else if (name) {
+        await pool.query("UPDATE users SET name=$1 WHERE id=$2", [name, userId]);
+      } else if (phone) {
+        await pool.query("UPDATE users SET phone=$1 WHERE id=$2", [phone, userId]);
+      }
+      return res.json({ message: "Profile updated successfully" });
     }
 
     return res.json({
@@ -171,6 +180,47 @@ export const updateProfile = async (req, res) => {
     console.log(err);
     res.status(500).json({
       message: "Update failed: " + err.message
+    });
+  }
+};
+
+/* ================= CHANGE PASSWORD ================= */
+export const changePassword = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        message: "Both current password and new password are required."
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        message: "New password must be at least 6 characters long."
+      });
+    }
+
+    // Retrieve existing hashed password
+    const userRes = await pool.query("SELECT password_hash FROM users WHERE id=$1", [userId]);
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, userRes.rows[0].password_hash);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Incorrect current password." });
+    }
+
+    const hashedNew = await bcrypt.hash(newPassword, 10);
+    await pool.query("UPDATE users SET password_hash=$1 WHERE id=$2", [hashedNew, userId]);
+
+    return res.json({ message: "Password updated successfully!" });
+  } catch (err) {
+    console.error("Change password error:", err);
+    return res.status(500).json({
+      message: "Failed to change password: " + err.message
     });
   }
 };

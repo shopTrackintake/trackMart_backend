@@ -13,7 +13,7 @@ export const getProductById = async (req, res) => {
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN vendors v ON p.vendor_id = v.id
-      WHERE p.id = $1 AND (p.status = 'active' OR p.status IS NULL OR p.status != 'inactive')
+      WHERE p.id = $1 AND (p.status != 'deleted' OR p.status IS NULL)
       `,
       [id]
     );
@@ -38,6 +38,11 @@ export const getProducts = async (req, res) => {
       care,
       concern,
       price,
+      min_price,
+      max_price,
+      discount_only,
+      in_stock,
+      dietary_type,
       sort,
       page = 1,
       limit = 8
@@ -55,7 +60,7 @@ export const getProducts = async (req, res) => {
     let values = [];
     let index = 1;
 
-    /* FILTERS SAME AS YOUR CODE */
+    /* FILTERS */
 
     if (search) {
       baseQuery += `
@@ -64,6 +69,7 @@ export const getProducts = async (req, res) => {
           OR p.description ILIKE $${index}
           OR p.care_type ILIKE $${index}
           OR p.concern_type ILIKE $${index}
+          OR p.brand_name ILIKE $${index}
         )
       `;
       values.push(`%${search}%`);
@@ -88,16 +94,40 @@ export const getProducts = async (req, res) => {
       index++;
     }
 
-    if (price) {
-      baseQuery += ` AND p.price <= $${index}`;
-      values.push(price);
+    if (dietary_type) {
+      baseQuery += ` AND p.dietary_type ILIKE $${index}`;
+      values.push(`%${dietary_type}%`);
       index++;
+    }
+
+    const effectiveMaxPrice = max_price || price;
+    if (effectiveMaxPrice) {
+      baseQuery += ` AND p.price <= $${index}`;
+      values.push(Number(effectiveMaxPrice));
+      index++;
+    }
+
+    if (min_price) {
+      baseQuery += ` AND p.price >= $${index}`;
+      values.push(Number(min_price));
+      index++;
+    }
+
+    if (discount_only === "true" || discount_only === true) {
+      baseQuery += ` AND p.discount_percent > 0`;
+    }
+
+    if (in_stock === "true" || in_stock === true) {
+      baseQuery += ` AND (p.stock > 0 OR p.stock IS NULL)`;
     }
 
     /* SORT */
     let orderBy = `ORDER BY p.created_at DESC`;
     if (sort === "price_low") orderBy = `ORDER BY p.price ASC`;
     if (sort === "price_high") orderBy = `ORDER BY p.price DESC`;
+    if (sort === "discount") orderBy = `ORDER BY COALESCE(p.discount_percent, 0) DESC, p.created_at DESC`;
+    if (sort === "title_asc") orderBy = `ORDER BY p.title ASC`;
+    if (sort === "title_desc") orderBy = `ORDER BY p.title DESC`;
 
     /* MAIN QUERY WITH LIMIT */
     const productsQuery = `

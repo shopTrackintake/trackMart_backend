@@ -199,17 +199,34 @@ export const getUserOrders = async (req, res) => {
           oi.refund_status,
           oi.refund_amount,
           oi.cancellation_reason,
+          p.id AS product_id,
           p.title AS product_title,
-          p.health_rating
+          p.image_url,
+          p.images,
+          p.health_rating,
+          p.description AS product_description,
+          v.business_name AS vendor_name
         FROM order_items oi
         JOIN products p ON p.id = oi.product_id
+        LEFT JOIN vendors v ON v.id = oi.vendor_id
         WHERE oi.order_id = $1`,
         [order.id]
       );
 
+      // Fetch shipping address if present
+      let shippingAddress = null;
+      if (order.address_id) {
+        const addrRes = await pool.query(
+          `SELECT * FROM addresses WHERE id = $1`,
+          [order.address_id]
+        );
+        if (addrRes.rows.length) shippingAddress = addrRes.rows[0];
+      }
+
       result.push({
         ...order,
-        items: items.rows
+        items: items.rows,
+        shipping_address: shippingAddress
       });
     }
 
@@ -217,6 +234,97 @@ export const getUserOrders = async (req, res) => {
 
   } catch (err) {
     console.log(err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/* ================= GET SINGLE ORDER BY ID (BUYER) ================= */
+export const getOrderById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const orderRes = await pool.query(
+      `SELECT * FROM orders WHERE id = $1 AND user_id = $2`,
+      [id, userId]
+    );
+
+    if (orderRes.rows.length === 0) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    const order = orderRes.rows[0];
+
+    const items = await pool.query(
+      `SELECT 
+        oi.id,
+        oi.quantity,
+        oi.item_status,
+        oi.delivery_date,
+        oi.price_at_purchase,
+        oi.refund_status,
+        oi.refund_amount,
+        oi.cancellation_reason,
+        p.id AS product_id,
+        p.title AS product_title,
+        p.image_url,
+        p.images,
+        p.health_rating,
+        p.description AS product_description,
+        v.business_name AS vendor_name
+      FROM order_items oi
+      JOIN products p ON p.id = oi.product_id
+      LEFT JOIN vendors v ON v.id = oi.vendor_id
+      WHERE oi.order_id = $1`,
+      [order.id]
+    );
+
+    // Fetch latest Delivery OTP from notifications if order is active/in-transit
+    let deliveryOtp = null;
+    try {
+      const orderShortId = String(order.id).slice(0, 8);
+      const otpNotifRes = await pool.query(
+        `SELECT title, message FROM notifications 
+         WHERE user_id = $1 
+           AND type = 'order_otp'
+           AND (message ILIKE $2 OR title ILIKE $2)
+         ORDER BY created_at DESC LIMIT 1`,
+        [userId, `%${orderShortId}%`]
+      );
+      if (otpNotifRes.rows.length > 0) {
+        const text = otpNotifRes.rows[0].title + " " + otpNotifRes.rows[0].message;
+        const match = text.match(/\b\d{6}\b/);
+        if (match) {
+          deliveryOtp = match[0];
+        }
+      }
+    } catch (e) {
+      console.warn("Could not fetch OTP from notifications:", e.message);
+    }
+
+    let shippingAddress = null;
+    if (order.address_id) {
+      const addrRes = await pool.query(
+        `SELECT * FROM addresses WHERE id = $1`,
+        [order.address_id]
+      );
+      if (addrRes.rows.length) shippingAddress = addrRes.rows[0];
+    }
+
+    const enrichedItems = items.rows.map(item => ({
+      ...item,
+      delivery_otp: deliveryOtp
+    }));
+
+    res.json({
+      ...order,
+      delivery_otp: deliveryOtp,
+      items: enrichedItems,
+      shipping_address: shippingAddress
+    });
+
+  } catch (err) {
+    console.error("Error fetching order by ID:", err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -339,6 +447,120 @@ export const cancelOrder = async (req, res) => {
 
   } catch (err) {
     console.error("Cancel Order Error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/* ================= CANCEL ORDER ITEM (BUYER) ================= */
+export const cancelOrderItem = async (req, res) => {
+  try {
+    const { item_id, reason } = req.body;
+    const userId = req.user.id;
+
+    if (!item_id) {
+      return res.status(400).json({ message: "Item ID is required" });
+    }
+
+    // Verify item and ownership
+    const itemRes = await pool.query(
+      `SELECT oi.*, o.user_id, o.payment_status, o.total_amount, p.title as product_title, p.vendor_id
+       FROM order_items oi
+       JOIN orders o ON oi.order_id = o.id
+       JOIN products p ON oi.product_id = p.id
+       WHERE oi.id = $1 AND o.user_id = $2`,
+      [item_id, userId]
+    );
+
+    if (!itemRes.rows.length) {
+      return res.status(404).json({ message: "Order item not found or unauthorized" });
+    }
+
+    const item = itemRes.rows[0];
+
+    if (item.item_status === "cancelled") {
+      return res.status(400).json({ message: "Item is already cancelled" });
+    }
+
+    if (["in_transit", "delivered"].includes(String(item.item_status || "").toLowerCase())) {
+      return res.status(400).json({
+        message: "Item cannot be cancelled because it has already been dispatched or delivered by the vendor."
+      });
+    }
+
+    const cancelReason = reason || "Cancelled by buyer";
+    const refundAmount = Number(item.price_at_purchase) * Number(item.quantity);
+
+    // Cancel item
+    await pool.query(
+      `UPDATE order_items
+       SET item_status = 'cancelled',
+           refund_status = 'processing',
+           refund_amount = $1,
+           cancellation_reason = $2
+       WHERE id = $3`,
+      [refundAmount, cancelReason, item.id]
+    );
+
+    // Restore stock
+    await pool.query(
+      `UPDATE products SET stock = stock + $1 WHERE id = $2`,
+      [item.quantity, item.product_id]
+    );
+
+    // Check if all items in this order are now cancelled
+    const remainingActive = await pool.query(
+      `SELECT id FROM order_items WHERE order_id = $1 AND item_status != 'cancelled'`,
+      [item.order_id]
+    );
+
+    if (remainingActive.rows.length === 0) {
+      await pool.query(
+        `UPDATE orders
+         SET order_status = 'cancelled',
+             payment_status = 'refunded',
+             refund_status = 'processing',
+             refund_amount = total_amount,
+             cancellation_reason = $1,
+             cancelled_at = NOW()
+         WHERE id = $2`,
+        [cancelReason, item.order_id]
+      );
+    }
+
+    // Notify vendor
+    const vendorUser = await pool.query(
+      `SELECT u.id FROM vendors v JOIN users u ON v.user_id = u.id WHERE v.id = $1`,
+      [item.vendor_id]
+    );
+
+    if (vendorUser.rows.length) {
+      await notifyUser({
+        userId: vendorUser.rows[0].id,
+        title: "🚫 Item Cancelled by Buyer",
+        message: `Product "${item.product_title}" in Order #${item.order_id.toString().slice(0, 8).toUpperCase()} was cancelled by the buyer.`,
+        type: "order_cancelled",
+        orderId: item.order_id,
+        link: `/vendor/orders/${item.order_id}`
+      });
+    }
+
+    // Notify buyer
+    await notifyUser({
+      userId,
+      title: "🚫 Item Cancelled & Refund Initiated",
+      message: `Your item "${item.product_title}" has been cancelled. Refund of ₹${refundAmount} has been initiated.`,
+      type: "order_cancelled",
+      orderId: item.order_id,
+      link: "/customer/orders"
+    });
+
+    res.json({
+      success: true,
+      message: `"${item.product_title}" cancelled successfully. Refund of ₹${refundAmount} has been initiated.`
+    });
+
+  } catch (err) {
+    console.error("Cancel Order Item Error:", err);
     res.status(500).json({ message: err.message });
   }
 };

@@ -175,3 +175,15 @@ res.status(500).json({message:err.message});
 }
 
 };
+
+/* ================= ADMIN DELETE TICKET ================= */
+export const deleteTicket = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query("DELETE FROM support_tickets WHERE id=$1", [id]);
+    res.json({ message: "Ticket deleted successfully", id });
+  } catch (err) {
+    console.error("Error deleting ticket:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
