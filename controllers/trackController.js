@@ -29,6 +29,8 @@ export const getItemTracking = async (req, res) => {
     a.longitude AS user_lng,  
 
     p.title,
+    p.image_url,
+    p.images,
     v.business_name AS vendor_name
 
   FROM order_items oi

@@ -58,8 +58,12 @@ pool.query(`
   );
 
   ALTER TABLE notifications
-  ADD COLUMN IF NOT EXISTS order_id INT,
+  ADD COLUMN IF NOT EXISTS order_id VARCHAR(255),
   ADD COLUMN IF NOT EXISTS link VARCHAR(255);
+
+  ALTER TABLE notifications
+  ALTER COLUMN user_id TYPE VARCHAR(255) USING user_id::text,
+  ALTER COLUMN order_id TYPE VARCHAR(255) USING order_id::text;
 
   ALTER TABLE orders
   ADD COLUMN IF NOT EXISTS refund_status VARCHAR(50) DEFAULT 'none',
@@ -72,6 +76,22 @@ pool.query(`
   ADD COLUMN IF NOT EXISTS refund_status VARCHAR(50) DEFAULT 'none',
   ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(10,2) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
+
+  CREATE TABLE IF NOT EXISTS contact_messages (
+    id SERIAL PRIMARY KEY,
+    user_id UUID,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    phone VARCHAR(50),
+    subject VARCHAR(255),
+    message TEXT NOT NULL,
+    status VARCHAR(50) DEFAULT 'unread',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+  ALTER TABLE contact_messages
+  ADD COLUMN IF NOT EXISTS subject TEXT,
+  ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'unread';
 `).catch(err => console.log("DB Migration Info:", err.message));
 
 export default pool;

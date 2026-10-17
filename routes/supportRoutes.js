@@ -4,7 +4,8 @@ import {
 createSupportTicket,
 getUserTickets,
 getAdminTickets,
-replyTicket
+replyTicket,
+deleteTicket
 } from "../controllers/supportController.js";
 
 import { protect } from "../middleware/auth.js";
@@ -22,5 +23,7 @@ router.get("/",protect,getUserTickets);
 router.get("/admin",protect,getAdminTickets);
 
 router.post("/admin/:id/reply",protect,replyTicket);
+
+router.delete("/admin/:id",protect,deleteTicket);
 
 export default router;
