@@ -67,9 +67,11 @@ export const getVendorOrders = async (req, res) => {
         o.created_at,
         oi.quantity,
         oi.vendor_earning,
+        oi.commission_amount,
+        oi.price_at_purchase,
         p.title AS product_title,
         p.image_url,
-        p.price AS unit_price
+        COALESCE(oi.price_at_purchase, p.price) AS unit_price
       FROM order_items oi
       JOIN orders o ON o.id = oi.order_id
       LEFT JOIN products p ON p.id = oi.product_id
@@ -133,7 +135,7 @@ export const getVendorOrderDetails = async (req, res) => {
     const { id } = req.params;
 
     const vendor = await pool.query(
-      "SELECT id FROM vendors WHERE user_id=$1",
+      "SELECT id, commission_percent FROM vendors WHERE user_id=$1",
       [req.user.id]
     );
 
@@ -141,7 +143,21 @@ export const getVendorOrderDetails = async (req, res) => {
       return res.status(404).json({ message: "Vendor not found" });
     }
 
-    const vendorId = vendor.rows[0].id;
+    const vendorRow = vendor.rows[0];
+    const vendorId = vendorRow.id;
+
+    // Fetch active commission percent for transparency
+    let activeCommission = vendorRow.commission_percent;
+    if (activeCommission === null || activeCommission === undefined) {
+      try {
+        const setRes = await pool.query("SELECT value FROM platform_settings WHERE key='platform_commission_percent'");
+        activeCommission = setRes.rows.length ? parseFloat(setRes.rows[0].value) : 5;
+      } catch (e) {
+        activeCommission = 5;
+      }
+    } else {
+      activeCommission = parseFloat(activeCommission);
+    }
 
     const order = await pool.query(
       `SELECT 
@@ -182,6 +198,7 @@ export const getVendorOrderDetails = async (req, res) => {
         oi.delivery_date,
         oi.price_at_purchase,
         oi.vendor_earning,
+        oi.commission_amount,
         p.title,
         p.image_url
       FROM order_items oi
@@ -192,7 +209,8 @@ export const getVendorOrderDetails = async (req, res) => {
 
     res.json({
       order: order.rows[0],
-      items: items.rows
+      items: items.rows,
+      commission_percent: activeCommission
     });
 
   } catch (err) {

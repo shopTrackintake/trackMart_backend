@@ -9,26 +9,41 @@ getAdminProducts,
 deleteAdminProduct,
 getAdminProductDetails,
 getVendorDetails,
-deleteVendor
+deleteVendor,
+updateVendorStatus
 } from "../controllers/adminController.js";
 
 import { protect } from "../middleware/auth.js";
 import { getAdminOrders, updateOrderRefundOrPaymentStatus } from "../controllers/adminController.js";
 import {
-getVendorWeeklyEarnings,
-clearVendorPayment
+  getVendorWeeklyEarnings,
+  clearVendorPayment,
+  getVendorPayoutItems,
+  getBuyerRefunds,
+  processBuyerRefund,
+  getPlatformSettings,
+  updatePlatformSettings,
+  updateVendorCommission
 } from "../controllers/adminController.js";
 
 const router = express.Router();
 
+/* SETTINGS */
+router.get("/settings",protect,getPlatformSettings);
+router.put("/settings",protect,updatePlatformSettings);
+router.put("/vendors/:vendorId/commission",protect,updateVendorCommission);
+
 /* DASHBOARD */
 router.get("/vendors/:id",protect,getVendorDetails);
+router.put("/vendors/:id/status",protect,updateVendorStatus);
 router.get("/stats",protect,getAdminStats);
 
-/* PENDING VENDORS */
+/* VENDOR PAYOUTS & BUYER REFUNDS */
 router.get("/vendor-earnings",protect,getVendorWeeklyEarnings);
-
+router.get("/vendor-payout-items/:vendorId",protect,getVendorPayoutItems);
 router.post("/vendor-payout/:vendorId",protect,clearVendorPayment);
+router.get("/buyer-refunds",protect,getBuyerRefunds);
+router.post("/process-refund",protect,processBuyerRefund);
 
 router.get("/pending-vendors",protect,getPendingVendors);
 router.get("/orders",protect,getAdminOrders);
