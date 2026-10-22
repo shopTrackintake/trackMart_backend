@@ -29,34 +29,70 @@ res.status(500).json({message:err.message});
 };
 /* ================= DASHBOARD STATS ================= */
 
-export const getAdminStats = async (req,res)=>{
-try{
+export const getAdminStats = async (req, res) => {
+  try {
+    const [
+      vendorsRes,
+      approvedVendorsRes,
+      pendingVendorsRes,
+      revenueRes,
+      grossSalesRes,
+      ordersRes,
+      pendingItemsRes,
+      inTransitItemsRes,
+      deliveredItemsRes,
+      productsRes,
+      ticketsRes,
+      recentOrdersRes,
+      recentVendorsRes
+    ] = await Promise.all([
+      pool.query("SELECT COUNT(*) FROM vendors"),
+      pool.query("SELECT COUNT(*) FROM vendors WHERE kyc_status='approved'"),
+      pool.query("SELECT COUNT(*) FROM vendors WHERE kyc_status='pending'"),
+      pool.query("SELECT COALESCE(SUM(commission_amount),0) as total FROM order_items"),
+      pool.query("SELECT COALESCE(SUM(total_amount),0) as total FROM orders"),
+      pool.query("SELECT COUNT(*) FROM orders"),
+      pool.query("SELECT COUNT(*) FROM order_items WHERE item_status='pending_vendor'"),
+      pool.query("SELECT COUNT(*) FROM order_items WHERE item_status='in_transit'"),
+      pool.query("SELECT COUNT(*) FROM order_items WHERE item_status='delivered'"),
+      pool.query("SELECT COUNT(*) FROM products WHERE status != 'deleted' OR status IS NULL"),
+      pool.query("SELECT COUNT(*) FROM support_tickets WHERE status='open'"),
+      pool.query(`
+        SELECT o.id, o.total_amount, o.payment_status, o.created_at, u.name as customer_name,
+        (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) as item_count
+        FROM orders o
+        LEFT JOIN users u ON o.user_id = u.id
+        ORDER BY o.created_at DESC
+        LIMIT 5
+      `),
+      pool.query(`
+        SELECT v.id, v.business_name, v.kyc_status, v.created_at, u.name, u.email
+        FROM vendors v
+        JOIN users u ON v.user_id = u.id
+        ORDER BY v.created_at DESC
+        LIMIT 5
+      `)
+    ]);
 
-const vendors = await pool.query(
-"SELECT COUNT(*) FROM vendors"
-);
-
-const pending = await pool.query(
-"SELECT COUNT(*) FROM vendors WHERE kyc_status='pending'"
-);
-
-const revenue = await pool.query(
-`
-SELECT COALESCE(SUM(commission_amount),0) as total
-FROM order_items
-`
-);
-
-res.json({
-vendors:Number(vendors.rows[0].count),
-pending:Number(pending.rows[0].count),
-revenue:Number(revenue.rows[0].total)
-});
-
-}catch(err){
-console.log(err);
-res.status(500).json({message:err.message});
-}
+    res.json({
+      vendors: Number(vendorsRes.rows[0].count),
+      approvedVendors: Number(approvedVendorsRes.rows[0].count),
+      pending: Number(pendingVendorsRes.rows[0].count),
+      revenue: Number(revenueRes.rows[0].total),
+      grossVolume: Number(grossSalesRes.rows[0].total),
+      totalOrders: Number(ordersRes.rows[0].count),
+      pendingOrders: Number(pendingItemsRes.rows[0].count),
+      inTransitOrders: Number(inTransitItemsRes.rows[0].count),
+      deliveredOrders: Number(deliveredItemsRes.rows[0].count),
+      totalProducts: Number(productsRes.rows[0].count),
+      openTickets: Number(ticketsRes.rows[0].count),
+      recentOrders: recentOrdersRes.rows,
+      recentVendors: recentVendorsRes.rows
+    });
+  } catch (err) {
+    console.error("Error in getAdminStats:", err);
+    res.status(500).json({ message: err.message });
+  }
 };
 
 
