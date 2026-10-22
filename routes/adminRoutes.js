@@ -9,7 +9,8 @@ getAdminProducts,
 deleteAdminProduct,
 getAdminProductDetails,
 getVendorDetails,
-deleteVendor
+deleteVendor,
+updateVendorStatus
 } from "../controllers/adminController.js";
 
 import { protect } from "../middleware/auth.js";
@@ -23,6 +24,7 @@ const router = express.Router();
 
 /* DASHBOARD */
 router.get("/vendors/:id",protect,getVendorDetails);
+router.put("/vendors/:id/status",protect,updateVendorStatus);
 router.get("/stats",protect,getAdminStats);
 
 /* PENDING VENDORS */

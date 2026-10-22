@@ -1,31 +1,38 @@
 import pool from "../config/db.js";
 import { notifyUser } from "../services/notificationService.js";
-export const getAllVendors = async (req,res)=>{
+export const getAllVendors = async (req, res) => {
+  try {
+    const { status } = req.query;
+    let query = `
+      SELECT 
+        v.id,
+        v.business_name,
+        v.owner_name,
+        v.phone,
+        v.shop_address,
+        v.pincode,
+        v.kyc_status,
+        v.commission_percent,
+        v.created_at,
+        u.name as user_name,
+        u.email,
+        (SELECT COUNT(*) FROM products p WHERE p.vendor_id = v.id AND (p.status != 'deleted' OR p.status IS NULL)) as product_count
+      FROM vendors v
+      JOIN users u ON v.user_id = u.id
+    `;
+    const params = [];
+    if (status && status !== "all") {
+      query += ` WHERE v.kyc_status = $1`;
+      params.push(status);
+    }
+    query += ` ORDER BY v.created_at DESC`;
 
-try{
-
-const vendors = await pool.query(`
-SELECT 
-v.id,
-v.business_name,
-v.kyc_status,
-u.name,
-u.email
-FROM vendors v
-JOIN users u ON v.user_id = u.id
-WHERE v.kyc_status = 'approved'
-ORDER BY v.created_at DESC
-`);
-
-res.json(vendors.rows);
-
-}catch(err){
-
-console.log(err);
-res.status(500).json({message:err.message});
-
-}
-
+    const vendors = await pool.query(query, params);
+    res.json(vendors.rows);
+  } catch (err) {
+    console.error("Error in getAllVendors:", err);
+    res.status(500).json({ message: err.message });
+  }
 };
 /* ================= DASHBOARD STATS ================= */
 
@@ -98,32 +105,41 @@ export const getAdminStats = async (req, res) => {
 
 /* ================= GET PENDING VENDORS ================= */
 
-export const getPendingVendors = async (req,res)=>{
-try{
+export const getPendingVendors = async (req, res) => {
+  try {
+    const vendors = await pool.query(`
+      SELECT 
+        v.id,
+        v.user_id,
+        v.business_name,
+        v.owner_name,
+        v.phone,
+        v.shop_address,
+        v.pincode,
+        v.kyc_status,
+        v.commission_percent,
+        v.created_at,
+        v.gst_number,
+        v.pan_number,
+        v.fssai_number,
+        v.upi_id,
+        v.bank_holder_name,
+        v.bank_account_number,
+        v.bank_ifsc,
+        u.name,
+        u.email,
+        u.phone as user_phone
+      FROM vendors v
+      JOIN users u ON v.user_id = u.id
+      WHERE v.kyc_status IN ('pending', 'hold')
+      ORDER BY v.created_at DESC
+    `);
 
-const vendors = await pool.query(
-`
-SELECT 
-v.id,
-v.business_name,
-v.kyc_status,
-u.name,
-u.email
-FROM vendors v
-JOIN users u ON v.user_id = u.id
-WHERE v.kyc_status IN ('pending','hold')
-ORDER BY v.created_at DESC
-`
-);
-
-res.json(vendors.rows);
-
-}catch(err){
-
-console.log(err);
-res.status(500).json({message:err.message});
-
-}
+    res.json(vendors.rows);
+  } catch (err) {
+    console.error("Error in getPendingVendors:", err);
+    res.status(500).json({ message: err.message });
+  }
 };
 
 
@@ -625,38 +641,150 @@ export const clearVendorPayment = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
-export const getVendorDetails = async (req,res)=>{
+export const getVendorDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
 
-try{
+    const vendorRes = await pool.query(
+      `
+      SELECT
+        v.id,
+        v.user_id,
+        v.business_name,
+        v.owner_name,
+        v.phone,
+        v.shop_address,
+        v.pincode,
+        v.upi_id,
+        v.bank_holder_name,
+        v.bank_account_number,
+        v.bank_ifsc,
+        v.pan_number,
+        v.gst_number,
+        v.fssai_number,
+        v.commission_percent,
+        v.kyc_status,
+        v.created_at,
+        u.name as user_name,
+        u.email,
+        u.phone as user_phone,
+        u.created_at as user_created_at
+      FROM vendors v
+      JOIN users u ON v.user_id = u.id
+      WHERE v.id = $1
+      `,
+      [id]
+    );
 
-const { id } = req.params;
+    if (!vendorRes.rows.length) {
+      return res.status(404).json({ message: "Vendor not found" });
+    }
 
-const vendor = await pool.query(
-`
-SELECT
-v.id,
-v.business_name,
-v.phone,
-v.shop_address,
-v.upi_id,
-v.kyc_status,
-u.name,
-u.email
-FROM vendors v
-JOIN users u ON v.user_id = u.id
-WHERE v.id=$1
-`,
-[id]
-);
+    const vendor = vendorRes.rows[0];
 
-res.json(vendor.rows[0]);
+    // Fetch vendor products
+    const productsRes = await pool.query(
+      `
+      SELECT 
+        p.id,
+        p.title,
+        p.price,
+        p.size,
+        p.images,
+        p.image_url,
+        p.status,
+        p.stock,
+        p.created_at,
+        p.delivery_charge,
+        p.health_rating,
+        c.name as category_name
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE p.vendor_id = $1 AND (p.status != 'deleted' OR p.status IS NULL)
+      ORDER BY p.created_at DESC
+      `,
+      [id]
+    );
 
-}catch(err){
+    // Fetch orders count & earnings stats for this vendor
+    const ordersStatsRes = await pool.query(
+      `
+      SELECT 
+        COUNT(DISTINCT order_id) as total_orders,
+        COALESCE(SUM(quantity), 0) as total_units_sold,
+        COALESCE(SUM(CASE WHEN payout_status = 'settled' THEN vendor_earning ELSE 0 END), 0) as settled_earnings,
+        COALESCE(SUM(CASE WHEN payout_status = 'pending' THEN vendor_earning ELSE 0 END), 0) as pending_settlement
+      FROM order_items
+      WHERE vendor_id = $1
+      `,
+      [id]
+    );
 
-console.log(err);
-res.status(500).json({message:err.message});
+    res.json({
+      vendor,
+      products: productsRes.rows,
+      stats: {
+        totalProducts: productsRes.rows.length,
+        totalOrders: Number(ordersStatsRes.rows[0]?.total_orders || 0),
+        totalUnitsSold: Number(ordersStatsRes.rows[0]?.total_units_sold || 0),
+        settledEarnings: Number(ordersStatsRes.rows[0]?.settled_earnings || 0),
+        pendingSettlement: Number(ordersStatsRes.rows[0]?.pending_settlement || 0)
+      }
+    });
+  } catch (err) {
+    console.error("Error in getVendorDetails:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
 
+/* ================= UPDATE VENDOR STATUS (DISABLE / ENABLE / HOLD / APPROVE) ================= */
+export const updateVendorStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, reason } = req.body; // e.g. 'approved', 'hold', 'disabled', 'rejected'
 
-}
+    if (!status) {
+      return res.status(400).json({ message: "Status is required" });
+    }
 
+    const vendorRes = await pool.query(
+      "SELECT id, user_id, business_name, kyc_status FROM vendors WHERE id=$1",
+      [id]
+    );
+
+    if (!vendorRes.rows.length) {
+      return res.status(404).json({ message: "Vendor not found" });
+    }
+
+    const vendor = vendorRes.rows[0];
+    const newStatus = status;
+
+    await pool.query("UPDATE vendors SET kyc_status=$1 WHERE id=$2", [newStatus, id]);
+
+    // If disabled, deactivate products
+    if (newStatus === "disabled" || newStatus === "hold" || newStatus === "rejected") {
+      await pool.query("UPDATE products SET status='inactive' WHERE vendor_id=$1 AND status='active'", [id]);
+    } else if (newStatus === "approved") {
+      await pool.query("UPDATE products SET status='active' WHERE vendor_id=$1 AND status='inactive'", [id]);
+    }
+
+    // Attempt to notify user
+    try {
+      await notifyUser(
+        vendor.user_id,
+        "vendor",
+        `Your store account status has been updated to "${newStatus}". ${reason ? `Reason: ${reason}` : ""}`
+      );
+    } catch (notifErr) {
+      console.warn("Notification error:", notifErr.message);
+    }
+
+    res.json({ 
+      message: `Vendor status successfully updated to ${newStatus}`,
+      status: newStatus 
+    });
+  } catch (err) {
+    console.error("Error in updateVendorStatus:", err);
+    res.status(500).json({ message: err.message });
+  }
 };
