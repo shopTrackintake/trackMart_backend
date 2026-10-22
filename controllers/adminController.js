@@ -413,6 +413,7 @@ export const getAdminOrders = async (req, res) => {
         o.user_id AS buyer_user_id,
         u.name AS buyer_name,
         u.email AS buyer_email,
+        u.phone AS buyer_phone,
         o.payment_method,
         o.payment_status,
         COALESCE(o.refund_status, 'none') AS refund_status,
@@ -426,14 +427,33 @@ export const getAdminOrders = async (req, res) => {
         oi.payout_reference,
         oi.quantity,
         oi.price_at_purchase,
+        oi.vendor_earning,
+        oi.commission_amount,
+        oi.delivery_otp,
+        oi.delivered_at,
         v.id AS vendor_id,
         v.business_name,
-        p.title AS product_name
+        v.owner_name AS vendor_owner,
+        v.phone AS vendor_phone,
+        p.id AS product_id,
+        p.title AS product_name,
+        p.image_url AS product_image,
+        p.size AS product_size,
+        a.full_name AS shipping_name,
+        a.phone AS shipping_phone,
+        a.house_no,
+        a.street,
+        a.locality,
+        a.landmark,
+        a.city,
+        a.state,
+        a.pincode
       FROM orders o
       JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN users u ON o.user_id = u.id
       LEFT JOIN vendors v ON oi.vendor_id = v.id
       LEFT JOIN products p ON oi.product_id = p.id
+      LEFT JOIN addresses a ON o.address_id = a.id
       ORDER BY o.created_at DESC;
     `);
 
@@ -447,7 +467,7 @@ export const getAdminOrders = async (req, res) => {
 /* ================= ADMIN UPDATE REFUND / PAYMENT / PAYOUT STATUS ================= */
 export const updateOrderRefundOrPaymentStatus = async (req, res) => {
   try {
-    const { order_id, refund_status, payment_status, refund_note, payout_status, payout_reference } = req.body;
+    const { order_id, item_id, order_status, refund_status, payment_status, refund_note, payout_status, payout_reference } = req.body;
 
     if (!order_id) {
       return res.status(400).json({ message: "Order ID is required" });
@@ -467,6 +487,21 @@ export const updateOrderRefundOrPaymentStatus = async (req, res) => {
     const newRefundStatus = refund_status || order.refund_status || "none";
     const newPaymentStatus = payment_status || order.payment_status || "pending";
     const note = refund_note || order.refund_note || "";
+
+    // If order_status / item_status is updated
+    if (order_status) {
+      if (item_id) {
+        await pool.query(
+          "UPDATE order_items SET item_status=$1 WHERE id=$2",
+          [order_status, item_id]
+        );
+      } else {
+        await pool.query(
+          "UPDATE order_items SET item_status=$1 WHERE order_id=$2",
+          [order_status, order_id]
+        );
+      }
+    }
 
     await pool.query(
       `UPDATE orders
