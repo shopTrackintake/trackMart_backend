@@ -92,6 +92,17 @@ pool.query(`
   ALTER TABLE contact_messages
   ADD COLUMN IF NOT EXISTS subject TEXT,
   ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'unread';
+
+  CREATE TABLE IF NOT EXISTS platform_settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value TEXT NOT NULL,
+    description TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+  INSERT INTO platform_settings (key, value, description)
+  VALUES ('platform_commission_percent', '5', 'Global Platform Commission Percentage applied to marketplace orders')
+  ON CONFLICT (key) DO NOTHING;
 `).catch(err => console.log("DB Migration Info:", err.message));
 
 export default pool;

@@ -643,7 +643,7 @@ export const getVendorWeeklyEarnings = async (req, res) => {
 export const clearVendorPayment = async (req, res) => {
   try {
     const { vendorId } = req.params;
-    const { reference } = req.body;
+    const { reference, amount: customAmount } = req.body;
 
     const vendorRes = await pool.query(
       `SELECT v.id, v.user_id, v.business_name FROM vendors v WHERE v.id=$1`,
@@ -665,7 +665,10 @@ export const clearVendorPayment = async (req, res) => {
       [vendorId]
     );
 
-    const amount = Number(pendingSum.rows[0].total || 0);
+    const calculatedTotal = Number(pendingSum.rows[0].total || 0);
+    const amount = (customAmount !== undefined && customAmount !== null && customAmount !== "")
+      ? Number(customAmount)
+      : calculatedTotal;
 
     await pool.query("BEGIN");
 
@@ -806,7 +809,7 @@ export const getBuyerRefunds = async (req, res) => {
 /* ================= PROCESS BUYER REFUND ================= */
 export const processBuyerRefund = async (req, res) => {
   try {
-    const { order_id, reference, note } = req.body;
+    const { order_id, reference, note, amount: customAmount } = req.body;
     if (!order_id) {
       return res.status(400).json({ message: "Order ID is required" });
     }
@@ -820,27 +823,33 @@ export const processBuyerRefund = async (req, res) => {
     const refundRef = reference || `REF-${Date.now()}`;
     const refundNote = note || `Refund processed successfully via Ref #${refundRef}`;
 
+    const finalRefundAmount = (customAmount !== undefined && customAmount !== null && customAmount !== "")
+      ? Number(customAmount)
+      : Number(order.refund_amount || order.total_amount || 0);
+
     await pool.query(
       `UPDATE orders
        SET refund_status = 'refunded',
            payment_status = 'refunded',
-           refund_note = $1
-       WHERE id = $2`,
-      [refundNote, order_id]
+           refund_amount = $1,
+           refund_note = $2
+       WHERE id = $3`,
+      [finalRefundAmount, refundNote, order_id]
     );
 
     await pool.query(
       `UPDATE order_items
-       SET refund_status = 'refunded'
-       WHERE order_id = $1`,
-      [order_id]
+       SET refund_status = 'refunded',
+           refund_amount = $1
+       WHERE order_id = $2`,
+      [finalRefundAmount, order_id]
     );
 
     if (order.user_id) {
       await notifyUser({
         userId: order.user_id,
         title: "💳 Refund Disbursed Successfully",
-        message: `Your refund of ₹${order.refund_amount || order.total_amount} for Order #${order_id.slice(0, 8).toUpperCase()} has been settled. Reference: ${refundRef}`,
+        message: `Your refund of ₹${finalRefundAmount} for Order #${order_id.slice(0, 8).toUpperCase()} has been settled. Reference: ${refundRef}`,
         type: "order_refund_update",
         orderId: order_id,
         link: "/customer/orders"
@@ -850,7 +859,7 @@ export const processBuyerRefund = async (req, res) => {
     res.json({
       message: "Buyer refund processed successfully",
       reference: refundRef,
-      refund_amount: order.refund_amount || order.total_amount
+      refund_amount: finalRefundAmount
     });
   } catch (err) {
     console.error("Error processing buyer refund:", err);
@@ -1002,6 +1011,102 @@ export const updateVendorStatus = async (req, res) => {
     });
   } catch (err) {
     console.error("Error in updateVendorStatus:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/* ================= PLATFORM SETTINGS ================= */
+export const getPlatformSettings = async (req, res) => {
+  try {
+    const settingsRes = await pool.query("SELECT key, value, description, updated_at FROM platform_settings");
+    const settings = {};
+    settingsRes.rows.forEach(r => {
+      settings[r.key] = r.value;
+    });
+
+    // Also get vendors summary with commission
+    const vendorsRes = await pool.query(`
+      SELECT 
+        v.id,
+        v.business_name,
+        v.owner_name,
+        v.phone,
+        v.commission_percent,
+        (SELECT COUNT(*) FROM products p WHERE p.vendor_id = v.id) as product_count
+      FROM vendors v
+      WHERE v.kyc_status = 'approved'
+      ORDER BY v.business_name ASC
+    `);
+
+    res.json({
+      settings,
+      vendors: vendorsRes.rows
+    });
+  } catch (err) {
+    console.error("Error in getPlatformSettings:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const updatePlatformSettings = async (req, res) => {
+  try {
+    const { platform_commission_percent, apply_to_all_vendors } = req.body;
+
+    if (platform_commission_percent !== undefined) {
+      const commVal = parseFloat(platform_commission_percent);
+      if (isNaN(commVal) || commVal < 0 || commVal > 100) {
+        return res.status(400).json({ message: "Commission percentage must be between 0 and 100" });
+      }
+
+      await pool.query(
+        `INSERT INTO platform_settings (key, value, description, updated_at)
+         VALUES ('platform_commission_percent', $1, 'Global Platform Commission Percentage applied to marketplace orders', NOW())
+         ON CONFLICT (key) DO UPDATE
+         SET value = EXCLUDED.value, updated_at = NOW()`,
+        [commVal.toString()]
+      );
+
+      // If admin opted to bulk update all vendors
+      if (apply_to_all_vendors) {
+        await pool.query(
+          "UPDATE vendors SET commission_percent = $1",
+          [commVal]
+        );
+      }
+    }
+
+    res.json({
+      message: "Platform settings updated successfully",
+      platform_commission_percent
+    });
+  } catch (err) {
+    console.error("Error in updatePlatformSettings:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const updateVendorCommission = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+    const { commission_percent } = req.body;
+
+    const commVal = parseFloat(commission_percent);
+    if (isNaN(commVal) || commVal < 0 || commVal > 100) {
+      return res.status(400).json({ message: "Commission percentage must be between 0 and 100" });
+    }
+
+    await pool.query(
+      "UPDATE vendors SET commission_percent = $1 WHERE id = $2",
+      [commVal, vendorId]
+    );
+
+    res.json({
+      message: `Commission for vendor #${vendorId} set to ${commVal}%`,
+      vendor_id: vendorId,
+      commission_percent: commVal
+    });
+  } catch (err) {
+    console.error("Error in updateVendorCommission:", err);
     res.status(500).json({ message: err.message });
   }
 };

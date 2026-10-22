@@ -51,14 +51,38 @@ address_id
 
     const orderId = order.rows[0].id;
 
+    // Fetch dynamic global platform commission setting
+    let defaultCommissionPercent = 5;
+    try {
+      const settingRes = await pool.query(
+        "SELECT value FROM platform_settings WHERE key='platform_commission_percent'"
+      );
+      if (settingRes.rows.length) {
+        defaultCommissionPercent = parseFloat(settingRes.rows[0].value) || 0;
+      }
+    } catch (e) {
+      defaultCommissionPercent = 5;
+    }
+
     for (let item of cart.rows) {
+      const productTotal = Number(item.price) * Number(item.quantity);
 
-      const productTotal =
-        Number(item.price) * Number(item.quantity);
+      // Determine dynamic commission percentage (vendor specific or platform global default)
+      let commissionPercent = defaultCommissionPercent;
+      try {
+        const vendorRes = await pool.query(
+          "SELECT commission_percent FROM vendors WHERE id=$1",
+          [item.vendor_id]
+        );
+        if (vendorRes.rows.length && vendorRes.rows[0].commission_percent !== null && vendorRes.rows[0].commission_percent !== undefined) {
+          commissionPercent = parseFloat(vendorRes.rows[0].commission_percent);
+        }
+      } catch (err) {
+        commissionPercent = defaultCommissionPercent;
+      }
 
-      // 0% Platform Commission on all orders (COD & Online)
-      const commission = 0;
-      const earning = productTotal;
+      const commission = Number(((productTotal * commissionPercent) / 100).toFixed(2));
+      const earning = Number((productTotal - commission).toFixed(2));
 
       await pool.query(
         `INSERT INTO order_items

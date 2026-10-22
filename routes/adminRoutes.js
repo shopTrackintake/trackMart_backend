@@ -20,10 +20,18 @@ import {
   clearVendorPayment,
   getVendorPayoutItems,
   getBuyerRefunds,
-  processBuyerRefund
+  processBuyerRefund,
+  getPlatformSettings,
+  updatePlatformSettings,
+  updateVendorCommission
 } from "../controllers/adminController.js";
 
 const router = express.Router();
+
+/* SETTINGS */
+router.get("/settings",protect,getPlatformSettings);
+router.put("/settings",protect,updatePlatformSettings);
+router.put("/vendors/:vendorId/commission",protect,updateVendorCommission);
 
 /* DASHBOARD */
 router.get("/vendors/:id",protect,getVendorDetails);
