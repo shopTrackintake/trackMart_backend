@@ -265,31 +265,29 @@ res.status(500).json({message:err.message});
 
 }
 };
-export const getAdminProducts = async (req,res)=>{
+export const getAdminProducts = async (req, res) => {
+  try {
+    const products = await pool.query(
+      `
+      SELECT
+        p.*,
+        v.id AS vendor_id,
+        v.business_name,
+        v.owner_name,
+        c.name AS category_name
+      FROM products p
+      JOIN vendors v ON p.vendor_id = v.id
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE (p.status != 'deleted' OR p.status IS NULL)
+      ORDER BY p.created_at DESC
+      `
+    );
 
-try{
-
-const products = await pool.query(
-`
-SELECT
-p.*,
-v.business_name
-FROM products p
-JOIN vendors v ON p.vendor_id = v.id
-WHERE p.status = 'active'
-ORDER BY v.business_name, p.created_at DESC
-`
-);
-
-res.json(products.rows);
-
-}catch(err){
-
-console.log(err);
-res.status(500).json({message:err.message});
-
-}
-
+    res.json(products.rows);
+  } catch (err) {
+    console.error("Error in getAdminProducts:", err);
+    res.status(500).json({ message: err.message });
+  }
 };
 export const deleteAdminProduct = async (req,res)=>{
 
@@ -385,7 +383,10 @@ p.status,
 p.created_at,
 c.name AS category_name,
 c.benefits,
-v.business_name
+v.id AS vendor_id,
+v.business_name,
+v.owner_name,
+v.phone AS vendor_phone
 FROM products p
 JOIN vendors v ON p.vendor_id = v.id
 LEFT JOIN categories c ON p.category_id = c.id
