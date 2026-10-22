@@ -429,8 +429,8 @@ export const getAdminOrders = async (req, res) => {
         oi.price_at_purchase,
         oi.vendor_earning,
         oi.commission_amount,
-        oi.delivery_otp,
-        oi.delivered_at,
+        oi.delivery_date,
+        oi.otp_used_at AS delivered_at,
         v.id AS vendor_id,
         v.business_name,
         v.owner_name AS vendor_owner,
@@ -581,12 +581,20 @@ export const getVendorWeeklyEarnings = async (req, res) => {
     const data = await pool.query(`
       SELECT
         v.id as vendor_id,
+        v.user_id,
         v.business_name,
         v.owner_name,
         v.phone,
+        v.shop_address,
+        v.pincode,
         v.upi_id,
+        v.bank_holder_name,
         v.bank_account_number,
         v.bank_ifsc,
+        v.pan_number,
+        v.gst_number,
+        v.fssai_number,
+        v.commission_percent,
         COALESCE(SUM(
           CASE 
             WHEN oi.payout_status = 'pending' AND oi.item_status != 'cancelled'
@@ -596,15 +604,32 @@ export const getVendorWeeklyEarnings = async (req, res) => {
         ), 0) as total_earning,
         COALESCE(SUM(
           CASE 
+            WHEN oi.payout_status = 'paid'
+            THEN oi.vendor_earning
+            ELSE 0
+          END
+        ), 0) as total_settled,
+        COALESCE(SUM(
+          CASE 
             WHEN oi.payout_status = 'pending' AND oi.item_status != 'cancelled'
             THEN oi.commission_amount
             ELSE 0
           END
-        ), 0) as cod_due
+        ), 0) as cod_due,
+        COUNT(
+          CASE 
+            WHEN oi.payout_status = 'pending' AND oi.item_status != 'cancelled'
+            THEN oi.id
+          END
+        ) as pending_orders_count,
+        COUNT(oi.id) as total_orders_count
       FROM vendors v
       LEFT JOIN order_items oi ON oi.vendor_id = v.id
-      LEFT JOIN orders o ON oi.order_id = o.id
-      GROUP BY v.id, v.business_name, v.owner_name, v.phone, v.upi_id, v.bank_account_number, v.bank_ifsc
+      GROUP BY 
+        v.id, v.user_id, v.business_name, v.owner_name, v.phone, 
+        v.shop_address, v.pincode, v.upi_id, v.bank_holder_name, 
+        v.bank_account_number, v.bank_ifsc, v.pan_number, v.gst_number, 
+        v.fssai_number, v.commission_percent
       ORDER BY total_earning DESC;
     `);
 
@@ -677,6 +702,162 @@ export const clearVendorPayment = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+/* ================= VENDOR PAYOUT ITEMS BREAKDOWN ================= */
+export const getVendorPayoutItems = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+    const items = await pool.query(
+      `
+      SELECT
+        oi.id AS item_id,
+        oi.order_id,
+        oi.product_id,
+        oi.price_at_purchase,
+        oi.quantity,
+        oi.vendor_earning,
+        oi.commission_amount,
+        oi.payout_status,
+        oi.payout_reference,
+        oi.item_status,
+        oi.created_at,
+        p.title AS product_name,
+        p.image_url AS product_image,
+        p.size AS product_size,
+        o.payment_method,
+        o.payment_status,
+        u.name AS buyer_name,
+        u.email AS buyer_email
+      FROM order_items oi
+      JOIN orders o ON oi.order_id = o.id
+      JOIN products p ON oi.product_id = p.id
+      JOIN users u ON o.user_id = u.id
+      WHERE oi.vendor_id = $1
+      ORDER BY oi.created_at DESC
+      LIMIT 100
+      `,
+      [vendorId]
+    );
+
+    res.json(items.rows);
+  } catch (err) {
+    console.error("Error fetching vendor payout items:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/* ================= BUYER REFUNDS LIST ================= */
+export const getBuyerRefunds = async (req, res) => {
+  try {
+    const refunds = await pool.query(`
+      SELECT
+        o.id AS order_id,
+        o.user_id,
+        u.name AS buyer_name,
+        u.email AS buyer_email,
+        u.phone AS buyer_phone,
+        o.total_amount,
+        o.payment_method,
+        o.payment_status,
+        COALESCE(o.refund_status, 'none') AS refund_status,
+        COALESCE(o.refund_amount, o.total_amount) AS refund_amount,
+        o.refund_note,
+        o.cancellation_reason,
+        o.cancelled_at,
+        o.created_at,
+        a.full_name AS shipping_name,
+        a.phone AS shipping_phone,
+        a.house_no,
+        a.street,
+        a.locality,
+        a.city,
+        a.state,
+        a.pincode,
+        (
+          SELECT json_agg(json_build_object(
+            'item_id', oi.id,
+            'product_id', oi.product_id,
+            'product_name', p.title,
+            'product_image', p.image_url,
+            'quantity', oi.quantity,
+            'price', oi.price_at_purchase,
+            'vendor_name', v.business_name,
+            'vendor_id', v.id
+          ))
+          FROM order_items oi
+          LEFT JOIN products p ON oi.product_id = p.id
+          LEFT JOIN vendors v ON oi.vendor_id = v.id
+          WHERE oi.order_id = o.id
+        ) AS items
+      FROM orders o
+      JOIN users u ON o.user_id = u.id
+      LEFT JOIN addresses a ON o.address_id = a.id
+      WHERE o.order_status = 'cancelled' OR (o.refund_status IS NOT NULL AND o.refund_status != 'none')
+      ORDER BY COALESCE(o.cancelled_at, o.created_at) DESC;
+    `);
+
+    res.json(refunds.rows);
+  } catch (err) {
+    console.error("Error fetching buyer refunds:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/* ================= PROCESS BUYER REFUND ================= */
+export const processBuyerRefund = async (req, res) => {
+  try {
+    const { order_id, reference, note } = req.body;
+    if (!order_id) {
+      return res.status(400).json({ message: "Order ID is required" });
+    }
+
+    const orderRes = await pool.query(`SELECT * FROM orders WHERE id=$1`, [order_id]);
+    if (!orderRes.rows.length) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    const order = orderRes.rows[0];
+    const refundRef = reference || `REF-${Date.now()}`;
+    const refundNote = note || `Refund processed successfully via Ref #${refundRef}`;
+
+    await pool.query(
+      `UPDATE orders
+       SET refund_status = 'refunded',
+           payment_status = 'refunded',
+           refund_note = $1
+       WHERE id = $2`,
+      [refundNote, order_id]
+    );
+
+    await pool.query(
+      `UPDATE order_items
+       SET refund_status = 'refunded'
+       WHERE order_id = $1`,
+      [order_id]
+    );
+
+    if (order.user_id) {
+      await notifyUser({
+        userId: order.user_id,
+        title: "💳 Refund Disbursed Successfully",
+        message: `Your refund of ₹${order.refund_amount || order.total_amount} for Order #${order_id.slice(0, 8).toUpperCase()} has been settled. Reference: ${refundRef}`,
+        type: "order_refund_update",
+        orderId: order_id,
+        link: "/customer/orders"
+      });
+    }
+
+    res.json({
+      message: "Buyer refund processed successfully",
+      reference: refundRef,
+      refund_amount: order.refund_amount || order.total_amount
+    });
+  } catch (err) {
+    console.error("Error processing buyer refund:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
 export const getVendorDetails = async (req, res) => {
   try {
     const { id } = req.params;
