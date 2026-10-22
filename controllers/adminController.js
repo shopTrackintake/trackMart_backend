@@ -723,7 +723,7 @@ export const getVendorPayoutItems = async (req, res) => {
         oi.payout_status,
         oi.payout_reference,
         oi.item_status,
-        oi.created_at,
+        o.created_at,
         p.title AS product_name,
         p.image_url AS product_image,
         p.size AS product_size,

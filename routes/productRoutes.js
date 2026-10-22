@@ -6,11 +6,13 @@ import {
   deleteProduct,
   getProductById,
   getProducts,
-  toggleProductStatus
+  toggleProductStatus,
+  bulkUploadProducts,
+  downloadProductTemplate
 } from "../controllers/productController.js";
 
 import { protect } from "../middleware/auth.js";
-import { upload } from "../middleware/upload.js";
+import { upload, excelUpload } from "../middleware/upload.js";
 
 const router = express.Router();
 
@@ -19,7 +21,18 @@ router.get("/", getProducts);
 
 router.get("/vendor", protect, getVendorProducts);
 
+/* ================= BULK EXCEL IMPORT & TEMPLATE ================= */
+router.get("/template/excel", downloadProductTemplate);
+
+router.post(
+  "/bulk",
+  protect,
+  excelUpload.single("file"),
+  bulkUploadProducts
+);
+
 router.get("/:id", getProductById);
+
 
 /* TOGGLE AVAILABILITY / ACTIVE STATUS */
 router.patch("/:id/toggle-status", protect, toggleProductStatus);
