@@ -12,7 +12,7 @@ import {
 } from "../controllers/productController.js";
 
 import { protect } from "../middleware/auth.js";
-import { upload, excelUpload } from "../middleware/upload.js";
+import { upload, excelUpload, bulkUploadMiddleware } from "../middleware/upload.js";
 
 const router = express.Router();
 
@@ -27,7 +27,7 @@ router.get("/template/excel", downloadProductTemplate);
 router.post(
   "/bulk",
   protect,
-  excelUpload.single("file"),
+  bulkUploadMiddleware,
   bulkUploadProducts
 );
 

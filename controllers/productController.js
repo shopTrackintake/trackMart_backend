@@ -1,5 +1,6 @@
 import pool from "../config/db.js";
 import xlsx from "xlsx";
+import cloudinary from "../config/cloudinary.js";
 export const getProductById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -908,12 +909,12 @@ export const downloadProductTemplate = async (req, res) => {
       {
         Field: "Main Product Image URL",
         Requirement: "RECOMMENDED",
-        Description: "Direct public URL (HTTPS link from Cloudinary, Imgur, or cloud storage)"
+        Description: "Direct HTTPS URL OR image filename (e.g. honey.jpg or SKU code) when uploading photos with spreadsheet"
       },
       {
         Field: "Ingredients Packaging Image URL",
         Requirement: "OPTIONAL",
-        Description: "Direct public URL to back label or ingredients photo"
+        Description: "Direct HTTPS URL OR filename (e.g. honey_ingredients.jpg or SKU_ingredients.jpg)"
       },
       {
         Field: "Dietary Type",
@@ -966,15 +967,26 @@ export const bulkUploadProducts = async (req, res) => {
     const vendor_id = vendor.rows[0].id;
     const vendorName = vendor.rows[0].business_name;
 
-    // 2. Extract rows from file or body
+    // 2. Extract files, rows, overrides, and images
+    const excelFile = req.files?.file?.[0] || req.file;
+    const imageFiles = req.files?.images || [];
+
     let rawRows = [];
-    if (req.file) {
-      const workbook = xlsx.read(req.file.buffer, { type: "buffer" });
+    if (excelFile) {
+      const workbook = xlsx.read(excelFile.buffer, { type: "buffer" });
       const firstSheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[firstSheetName];
       rawRows = xlsx.utils.sheet_to_json(worksheet, { defval: "" });
-    } else if (Array.isArray(req.body.products)) {
-      rawRows = req.body.products;
+    } else if (req.body.products) {
+      if (typeof req.body.products === "string") {
+        try {
+          rawRows = JSON.parse(req.body.products);
+        } catch (e) {
+          rawRows = [];
+        }
+      } else if (Array.isArray(req.body.products)) {
+        rawRows = req.body.products;
+      }
     } else {
       return res.status(400).json({
         message: "No product data or Excel file provided. Upload an .xlsx file or submit product records."
@@ -985,6 +997,50 @@ export const bulkUploadProducts = async (req, res) => {
       return res.status(400).json({
         message: "The uploaded spreadsheet does not contain any product rows."
       });
+    }
+
+    // Parse overrides if provided from the preview editor
+    let overrides = {};
+    if (req.body.overrides) {
+      try {
+        overrides = typeof req.body.overrides === "string" ? JSON.parse(req.body.overrides) : req.body.overrides;
+      } catch (err) {
+        console.warn("Could not parse overrides JSON:", err);
+      }
+    }
+
+    // Upload accompanying images to Cloudinary in parallel and build lookup map
+    const imageMap = new Map();
+    if (imageFiles && imageFiles.length > 0) {
+      await Promise.all(
+        imageFiles.map(async (img) => {
+          try {
+            const originalName = img.originalname.trim();
+            const baseName = originalName.replace(/\.[^/.]+$/, "").trim();
+
+            const secureUrl = await new Promise((resolve, reject) => {
+              const stream = cloudinary.uploader.upload_stream(
+                {
+                  folder: "trackmart_products",
+                  resource_type: "image"
+                },
+                (err, result) => {
+                  if (err) return reject(err);
+                  resolve(result?.secure_url || result?.url);
+                }
+              );
+              stream.end(img.buffer);
+            });
+
+            if (secureUrl) {
+              imageMap.set(originalName.toLowerCase(), secureUrl);
+              imageMap.set(baseName.toLowerCase(), secureUrl);
+            }
+          } catch (uploadErr) {
+            console.error(`Failed to upload image "${img.originalname}" to Cloudinary:`, uploadErr);
+          }
+        })
+      );
     }
 
     // 3. Pre-fetch categories for fast name-to-id resolution
@@ -1005,12 +1061,13 @@ export const bulkUploadProducts = async (req, res) => {
     for (let i = 0; i < rawRows.length; i++) {
       const row = rawRows[i];
       const rowIndex = i + 2; // Row 1 is header, so data starts at row 2 in Excel
+      const rowOverride = overrides[rowIndex] || overrides[i] || overrides[row.rowNum] || {};
 
-      // Extract required fields
-      const title = getCleanVal(row, "Product Title * [REQUIRED]", "Product Title", "Title", "Product Name", "title");
-      const rawPrice = getCleanVal(row, "Price (₹) * [REQUIRED]", "Price (₹)", "Price", "price", "mrp");
-      const rawStock = getCleanVal(row, "Stock Quantity * [REQUIRED]", "Stock Quantity", "Stock", "stock", "quantity");
-      const size = getCleanVal(row, "Size / Net Quantity * [REQUIRED]", "Size / Net Quantity", "Size", "size", "net_weight", "weight");
+      // Extract required fields (allowing preview overrides)
+      const title = rowOverride.title || getCleanVal(row, "Product Title * [REQUIRED]", "Product Title", "Title", "Product Name", "title");
+      const rawPrice = rowOverride.price !== undefined && rowOverride.price !== "" ? rowOverride.price : getCleanVal(row, "Price (₹) * [REQUIRED]", "Price (₹)", "Price", "price", "mrp");
+      const rawStock = rowOverride.stock !== undefined && rowOverride.stock !== "" ? rowOverride.stock : getCleanVal(row, "Stock Quantity * [REQUIRED]", "Stock Quantity", "Stock", "stock", "quantity");
+      const size = rowOverride.size || getCleanVal(row, "Size / Net Quantity * [REQUIRED]", "Size / Net Quantity", "Size", "size", "net_weight", "weight");
 
       // Skip blank rows
       if (!title && !rawPrice && !rawStock && !size) {
@@ -1087,10 +1144,10 @@ export const bulkUploadProducts = async (req, res) => {
       }
 
       // Extract optional fields
-      const rawCategory = getCleanVal(row, "Category Name", "Category", "category_name", "category_id", "category");
+      const rawCategory = rowOverride.category || getCleanVal(row, "Category Name", "Category", "category_name", "category_id", "category");
       let category_id = null;
       if (rawCategory) {
-        const cleanCat = rawCategory.toLowerCase().trim();
+        const cleanCat = String(rawCategory).toLowerCase().trim();
         if (catMap.has(cleanCat)) {
           category_id = catMap.get(cleanCat);
         } else if (!isNaN(Number(rawCategory)) && catMap.has(String(Number(rawCategory)))) {
@@ -1098,54 +1155,129 @@ export const bulkUploadProducts = async (req, res) => {
         }
       }
 
-      const rawDiscount = getCleanVal(row, "Discount Percent (%)", "Discount %", "discount_percent", "discount");
+      const rawDiscount = rowOverride.discount_percent !== undefined ? rowOverride.discount_percent : getCleanVal(row, "Discount Percent (%)", "Discount %", "discount_percent", "discount");
       const parsedDiscount = rawDiscount && !isNaN(Number(rawDiscount)) ? Math.max(0, Math.min(99, Number(rawDiscount))) : 0;
 
-      const brand_name = getCleanVal(row, "Brand Name", "Brand", "brand_name") || null;
-      const sku = getCleanVal(row, "SKU Code", "SKU", "sku") || null;
-      const barcode = getCleanVal(row, "Barcode / EAN", "Barcode", "barcode") || null;
+      const brand_name = rowOverride.brand_name || getCleanVal(row, "Brand Name", "Brand", "brand_name") || null;
+      const sku = rowOverride.sku || getCleanVal(row, "SKU Code", "SKU", "sku") || null;
+      const barcode = rowOverride.barcode || getCleanVal(row, "Barcode / EAN", "Barcode", "barcode") || null;
 
-      const image_url = getCleanVal(row, "Main Product Image URL", "Product Image URL", "Image URL", "image_url") || null;
-      const ingredients_image_url = getCleanVal(row, "Ingredients Packaging Image URL", "Ingredients Image URL", "ingredients_image_url") || null;
+      // Resolve main product image URL
+      let image_url = rowOverride.image_url || getCleanVal(row, "Main Product Image URL", "Product Image URL", "Image URL", "image_url") || null;
+      let ingredients_image_url = rowOverride.ingredients_image_url || getCleanVal(row, "Ingredients Packaging Image URL", "Ingredients Image URL", "ingredients_image_url") || null;
 
-      const ingredients = getCleanVal(row, "Ingredients", "Ingredient List", "ingredients") || null;
-      const dietary_type = getCleanVal(row, "Dietary Type", "dietary_type", "Dietary") || null;
-      const flavour = getCleanVal(row, "Flavour", "Flavor", "flavour", "flavor") || null;
-      const care_type = getCleanVal(row, "Care Type", "care_type") || null;
-      const concern_type = getCleanVal(row, "Concern Type", "concern_type") || null;
+      // 1. If user picked a local image file for this row in the preview
+      if (rowOverride.imageFilename) {
+        const cleanPick = rowOverride.imageFilename.trim().toLowerCase();
+        const basePick = cleanPick.replace(/\.[^/.]+$/, "");
+        if (imageMap.has(cleanPick)) {
+          image_url = imageMap.get(cleanPick);
+        } else if (imageMap.has(basePick)) {
+          image_url = imageMap.get(basePick);
+        }
+      }
 
-      const rawCalories = getCleanVal(row, "Calories (kcal)", "Calories", "calories");
+      // 2. If image_url was specified in Excel as a filename or short name
+      if (image_url) {
+        const cleanImg = image_url.trim().toLowerCase();
+        const baseImg = cleanImg.replace(/\.[^/.]+$/, "");
+        if (imageMap.has(cleanImg)) {
+          image_url = imageMap.get(cleanImg);
+        } else if (imageMap.has(baseImg)) {
+          image_url = imageMap.get(baseImg);
+        }
+      }
+
+      // 3. Fallback auto-match by SKU, Barcode, or Title if image_url is not a web URL (http:// or https://)
+      if (!image_url || (!image_url.startsWith("http://") && !image_url.startsWith("https://"))) {
+        if (sku && imageMap.has(sku.toLowerCase().trim())) {
+          image_url = imageMap.get(sku.toLowerCase().trim());
+        } else if (barcode && imageMap.has(barcode.toLowerCase().trim())) {
+          image_url = imageMap.get(barcode.toLowerCase().trim());
+        } else if (title && imageMap.has(title.toLowerCase().trim())) {
+          image_url = imageMap.get(title.toLowerCase().trim());
+        }
+      }
+
+      // Ingredients image matching
+      if (rowOverride.ingredientsImageFilename) {
+        const cleanIngPick = rowOverride.ingredientsImageFilename.trim().toLowerCase();
+        const baseIngPick = cleanIngPick.replace(/\.[^/.]+$/, "");
+        if (imageMap.has(cleanIngPick)) {
+          ingredients_image_url = imageMap.get(cleanIngPick);
+        } else if (imageMap.has(baseIngPick)) {
+          ingredients_image_url = imageMap.get(baseIngPick);
+        }
+      } else if (ingredients_image_url) {
+        const cleanIng = ingredients_image_url.trim().toLowerCase();
+        const baseIng = cleanIng.replace(/\.[^/.]+$/, "");
+        if (imageMap.has(cleanIng)) {
+          ingredients_image_url = imageMap.get(cleanIng);
+        } else if (imageMap.has(baseIng)) {
+          ingredients_image_url = imageMap.get(baseIng);
+        }
+      }
+
+      if (!ingredients_image_url || (!ingredients_image_url.startsWith("http://") && !ingredients_image_url.startsWith("https://"))) {
+        const cleanSku = sku ? sku.toLowerCase().trim() : "";
+        const cleanTitle = title ? title.toLowerCase().trim() : "";
+        const ingCandidates = [
+          cleanSku && `${cleanSku}_ingredients`,
+          cleanSku && `${cleanSku}-ingredients`,
+          cleanSku && `${cleanSku}_label`,
+          cleanSku && `${cleanSku}-label`,
+          cleanSku && `${cleanSku}_back`,
+          cleanSku && `${cleanSku}-back`,
+          cleanTitle && `${cleanTitle}_ingredients`,
+          cleanTitle && `${cleanTitle}_label`
+        ].filter(Boolean);
+
+        for (const candidate of ingCandidates) {
+          if (imageMap.has(candidate)) {
+            ingredients_image_url = imageMap.get(candidate);
+            break;
+          }
+        }
+      }
+
+      const ingredients = rowOverride.ingredients !== undefined ? rowOverride.ingredients : (getCleanVal(row, "Ingredients", "Ingredient List", "ingredients") || null);
+      const dietary_type = rowOverride.dietary_type !== undefined ? rowOverride.dietary_type : (getCleanVal(row, "Dietary Type", "dietary_type", "Dietary") || null);
+      const flavour = rowOverride.flavour !== undefined ? rowOverride.flavour : (getCleanVal(row, "Flavour", "Flavor", "flavour", "flavor") || null);
+      const care_type = rowOverride.care_type !== undefined ? rowOverride.care_type : (getCleanVal(row, "Care Type", "care_type") || null);
+      const concern_type = rowOverride.concern_type !== undefined ? rowOverride.concern_type : (getCleanVal(row, "Concern Type", "concern_type") || null);
+
+      const rawCalories = rowOverride.calories !== undefined ? rowOverride.calories : getCleanVal(row, "Calories (kcal)", "Calories", "calories");
       const parsedCalories = rawCalories && !isNaN(Number(rawCalories)) ? Number(rawCalories) : null;
 
-      const rawSugar = getCleanVal(row, "Sugar (g)", "Sugar", "sugar");
+      const rawSugar = rowOverride.sugar !== undefined ? rowOverride.sugar : getCleanVal(row, "Sugar (g)", "Sugar", "sugar");
       const parsedSugar = rawSugar && !isNaN(Number(rawSugar)) ? Number(rawSugar) : null;
 
-      const rawFat = getCleanVal(row, "Fat (g)", "Fat", "fat");
+      const rawFat = rowOverride.fat !== undefined ? rowOverride.fat : getCleanVal(row, "Fat (g)", "Fat", "fat");
       const parsedFat = rawFat && !isNaN(Number(rawFat)) ? Number(rawFat) : null;
 
-      const rawProtein = getCleanVal(row, "Protein (g)", "Protein", "protein");
+      const rawProtein = rowOverride.protein !== undefined ? rowOverride.protein : getCleanVal(row, "Protein (g)", "Protein", "protein");
       const parsedProtein = rawProtein && !isNaN(Number(rawProtein)) ? Number(rawProtein) : null;
 
       const health_rating = null;
 
-      const serving_size = getCleanVal(row, "Serving Size", "serving_size") || null;
-      const servings_per_container = getCleanVal(row, "Servings Per Container", "servings_per_container") || null;
-      const net_weight = getCleanVal(row, "Net Weight", "net_weight") || size;
+      const serving_size = rowOverride.serving_size !== undefined ? rowOverride.serving_size : (getCleanVal(row, "Serving Size", "serving_size") || null);
+      const servings_per_container = rowOverride.servings_per_container !== undefined ? rowOverride.servings_per_container : (getCleanVal(row, "Servings Per Container", "servings_per_container") || null);
+      const net_weight = rowOverride.net_weight !== undefined ? rowOverride.net_weight : (getCleanVal(row, "Net Weight", "net_weight") || size);
 
-      const description = getCleanVal(row, "Product Description", "Description", "description") || null;
-      const how_to_use = getCleanVal(row, "How To Use / Directions", "How To Use", "how_to_use") || null;
-      const making_process = getCleanVal(row, "Manufacturing Process", "Making Process", "making_process") || null;
+      const description = rowOverride.description !== undefined ? rowOverride.description : (getCleanVal(row, "Product Description", "Description", "description") || null);
+      const how_to_use = rowOverride.how_to_use !== undefined ? rowOverride.how_to_use : (getCleanVal(row, "How To Use / Directions", "How To Use", "how_to_use") || null);
+      const making_process = rowOverride.making_process !== undefined ? rowOverride.making_process : (getCleanVal(row, "Manufacturing Process", "Making Process", "making_process") || null);
 
-      const manufacturer_name = getCleanVal(row, "Manufacturer Name", "manufacturer_name") || null;
-      const manufacturer_address = getCleanVal(row, "Manufacturer Address", "manufacturer_address") || null;
-      const fssai_license = getCleanVal(row, "FSSAI License Number", "FSSAI License", "fssai_license") || null;
-      const batch_number = getCleanVal(row, "Batch Number", "batch_number") || null;
+      const manufacturer_name = rowOverride.manufacturer_name !== undefined ? rowOverride.manufacturer_name : (getCleanVal(row, "Manufacturer Name", "manufacturer_name") || null);
+      const manufacturer_address = rowOverride.manufacturer_address !== undefined ? rowOverride.manufacturer_address : (getCleanVal(row, "Manufacturer Address", "manufacturer_address") || null);
+      const fssai_license = rowOverride.fssai_license !== undefined ? rowOverride.fssai_license : (getCleanVal(row, "FSSAI License Number", "FSSAI License", "fssai_license") || null);
+      const batch_number = rowOverride.batch_number !== undefined ? rowOverride.batch_number : (getCleanVal(row, "Batch Number", "batch_number") || null);
 
-      const mfg_date = parseDateVal(getCleanVal(row, "Manufacturing Date (YYYY-MM-DD)", "Mfg Date", "mfg_date"));
-      const expiry_date = parseDateVal(getCleanVal(row, "Expiry Date (YYYY-MM-DD)", "Expiry Date", "expiry_date"));
+      const mfg_date = parseDateVal(rowOverride.mfg_date !== undefined ? rowOverride.mfg_date : getCleanVal(row, "Manufacturing Date (YYYY-MM-DD)", "Mfg Date", "mfg_date"));
+      const expiry_date = parseDateVal(rowOverride.expiry_date !== undefined ? rowOverride.expiry_date : getCleanVal(row, "Expiry Date (YYYY-MM-DD)", "Expiry Date", "expiry_date"));
 
-      const nutrition_per_100g = getCleanVal(row, "Nutrition Facts per 100g", "nutrition_per_100g") || null;
-      const nutrition_per_serving = getCleanVal(row, "Nutrition Facts per Serving", "nutrition_per_serving") || null;
+      const nutrition_per_100g = rowOverride.nutrition_per_100g !== undefined ? rowOverride.nutrition_per_100g : (getCleanVal(row, "Nutrition Facts per 100g", "nutrition_per_100g") || null);
+      const nutrition_per_serving = rowOverride.nutrition_per_serving !== undefined ? rowOverride.nutrition_per_serving : (getCleanVal(row, "Nutrition Facts per Serving", "nutrition_per_serving") || null);
 
       // Insert product into database
       try {
