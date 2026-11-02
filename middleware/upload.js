@@ -16,3 +16,11 @@ export const excelUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024 } // 15MB max Excel file
 });
+
+export const bulkUploadMiddleware = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB max total batch
+}).fields([
+  { name: "file", maxCount: 1 },
+  { name: "images", maxCount: 150 }
+]);
