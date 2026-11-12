@@ -16,6 +16,7 @@ import paymentRoutes from "./routes/payment.js";
 import profileRoutes from "./routes/profileRoutes.js";
 import contactRoutes from "./routes/contactRoutes.js";
 import trackRoutes from "./routes/trackRoutes.js";
+import healthOptionsRoutes from "./routes/healthOptionsRoutes.js";
 const app = express();
 
 app.use(cors({
@@ -43,6 +44,7 @@ app.use("/api/addresses", addressRoutes);
 app.use("/uploads", express.static("uploads"));
 app.use("/api/auth", authRoutes);
 app.use("/api/categories", categoryRoutes);
+app.use("/api/health-options", healthOptionsRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/cart", cartRoutes);
 app.use("/api/orders", orderRoutes);

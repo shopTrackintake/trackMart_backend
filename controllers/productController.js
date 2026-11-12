@@ -562,11 +562,14 @@ export const getVendorProducts = async (req, res) => {
 
     const products = await pool.query(
       `
-      SELECT *
-      FROM products
-      WHERE vendor_id=$1
-      AND (status != 'deleted' OR status IS NULL)
-      ORDER BY created_at DESC
+      SELECT 
+        p.*,
+        c.name AS category_name
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE p.vendor_id=$1
+      AND (p.status != 'deleted' OR p.status IS NULL)
+      ORDER BY p.created_at DESC
       `,
       [vendorId]
     );

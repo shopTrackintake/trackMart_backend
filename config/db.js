@@ -103,6 +103,58 @@ pool.query(`
   INSERT INTO platform_settings (key, value, description)
   VALUES ('platform_commission_percent', '5', 'Global Platform Commission Percentage applied to marketplace orders')
   ON CONFLICT (key) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS care_types (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) UNIQUE NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS health_concerns (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) UNIQUE NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+  INSERT INTO care_types (name) VALUES
+    ('Muscle & Fitness Care'),
+    ('Sports & Workout Care'),
+    ('Digestive & Gut Care'),
+    ('Immunity & Wellness Care'),
+    ('Weight & Metabolism Care'),
+    ('Bone & Joint Care'),
+    ('Heart & Cholesterol Care'),
+    ('Skin Care'),
+    ('Hair Care'),
+    ('Diabetes & Sugar Care'),
+    ('Stress & Sleep Care'),
+    ('Men''s Health'),
+    ('Women''s Health'),
+    ('Digestive Care'),
+    ('Heart Care'),
+    ('Immunity Care')
+  ON CONFLICT (name) DO NOTHING;
+
+  INSERT INTO health_concerns (name) VALUES
+    ('Muscle Building & Recovery'),
+    ('Stamina & Energy Boost'),
+    ('Weight Gain & Mass'),
+    ('Weight Loss & Fat Burn'),
+    ('Immunity Support'),
+    ('Digestion & Bloating'),
+    ('Joint Mobility'),
+    ('Skin Health & Glow'),
+    ('Hair Fall Control'),
+    ('Blood Sugar Management'),
+    ('Stress Relief'),
+    ('General Wellbeing'),
+    ('Immunity'),
+    ('Energy Boost'),
+    ('Digestion'),
+    ('Skin Health')
+  ON CONFLICT (name) DO NOTHING;
 `).catch(err => console.log("DB Migration Info:", err.message));
 
 export default pool;
